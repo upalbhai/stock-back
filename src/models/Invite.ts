@@ -3,20 +3,25 @@ import mongoose, { Schema } from "mongoose";
 const inviteSchema = new Schema(
   {
     businessId: { type: Schema.Types.ObjectId, ref: "Business", required: true },
-    roleId: { type: Schema.Types.ObjectId, ref: "Role", required: true },
     outletIds: { type: [Schema.Types.ObjectId], ref: "Outlet", default: [] },
-    phone: { type: String, required: true },
-    tokenHash: { type: String, required: true },
-    status: {
+    roleId: { type: Schema.Types.ObjectId, ref: "Role" },
+    role: {
       type: String,
-      enum: ["pending", "accepted", "expired"],
-      default: "pending"
+      enum: ["manager", "staff"],
+      default: "staff"
     },
+    phone: { type: String }, // pre-filled on invite form
+    name: { type: String }, // pre-filled on invite form
+    token: { type: String, required: true, unique: true },
     expiresAt: { type: Date, required: true },
+    usedAt: { type: Date },
+    usedBy: { type: Schema.Types.ObjectId, ref: "User" },
     createdBy: { type: Schema.Types.ObjectId, ref: "User" }
   },
   { timestamps: true }
 );
+
+inviteSchema.index({ businessId: 1 });
 
 export const Invite =
   mongoose.models.Invite || mongoose.model("Invite", inviteSchema);

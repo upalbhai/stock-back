@@ -1,13 +1,9 @@
 import { Router } from "express";
-import { dailyReport } from "../controllers/reportController.js";
+import { getDailyReport, getOutletComparison, getRevenueTrend } from "../controllers/reportController.js";
 import { requireAuth } from "../middlewares/auth.js";
-import { requireRole } from "../middlewares/roles.js";
+import { requirePermission } from "../middlewares/permission.js";
 
 export const reportRouter = Router();
-
-reportRouter.get(
-	"/daily",
-	requireAuth,
-	requireRole(["owner", "manager"]),
-	dailyReport
-);
+reportRouter.get("/daily", requireAuth, getDailyReport);
+reportRouter.get("/compare", requireAuth, getOutletComparison);
+reportRouter.get("/trend", requireAuth, getRevenueTrend);

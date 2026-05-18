@@ -1,83 +1,94 @@
-import type { Request, Response, NextFunction } from "express";
+import type { Response, NextFunction } from "express";
+import type { AuthedRequest } from "../middlewares/auth.js";
 import { Order } from "../models/Order.js";
 import { Payment } from "../models/Payment.js";
+import { Expense } from "../models/Expense.js";
 import { Product } from "../models/Product.js";
-import { getDayRange } from "../utils/date.js";
+import { Outlet } from "../models/Outlet.js";
 
-export async function dailyReport(
-  req: Request,
-  res: Response,
-  next: NextFunction
-) {
+function todayRange() {
+  const start = new Date(); start.setHours(0, 0, 0, 0);
+  const end = new Date(); end.setHours(23, 59, 59, 999);
+  return { start, end };
+}
+
+export async function getDailyReport(req: AuthedRequest, res: Response, next: NextFunction) {
   try {
+    const { businessId } = req.user!;
     const { outletId, date } = req.query;
-    const { start, end } = getDayRange(date as string | undefined);
+    let start: Date, end: Date;
+    if (date) {
+      start = new Date(date as string); start.setHours(0, 0, 0, 0);
+      end = new Date(date as string); end.setHours(23, 59, 59, 999);
+    } else { ({ start, end } = todayRange()); }
 
-    const orders = await Order.find({
-      outletId,
-      createdAt: { $gte: start, $lte: end }
-    }).lean();
+    const query: Record<string, unknown> = { businessId, status: "completed", createdAt: { $gte: start, $lte: end } };
+    if (outletId) query.outletId = outletId;
 
-    const payments = await Payment.find({
-      outletId,
-      createdAt: { $gte: start, $lte: end }
-    }).lean();
-
-    const totalSales = orders.reduce((sum, order) => sum + order.total, 0);
+    const orders = await Order.find(query).populate("payments").lean();
+    const totalSales = orders.reduce((s, o) => s + o.total, 0);
     const totalOrders = orders.length;
-
-    const paymentSummary = {
-      cash: 0,
-      online: 0,
-      card: 0,
-      split: 0
-    };
-
-    payments.forEach((payment) => {
-      if (payment.method === "split") {
-        paymentSummary.cash += payment.split?.cash || 0;
-        paymentSummary.online += payment.split?.online || 0;
-        paymentSummary.card += payment.split?.card || 0;
-        paymentSummary.split += payment.amount;
-        return;
+    const paymentSummary = { cash: 0, upi: 0, card: 0, wallet: 0, split: 0 };
+    for (const order of orders) {
+      for (const pmtId of order.payments) {
+        const pmt = order.payments.find((p: { _id: { toString: () => string } }) => (p as unknown as { _id: { toString: () => string } })._id.toString() === pmtId?.toString());
+        if (pmt && typeof pmt === "object" && "method" in pmt) {
+          const method = (pmt as { method: string }).method as keyof typeof paymentSummary;
+          paymentSummary[method] = (paymentSummary[method] || 0) + (pmt as { amount: number }).amount;
+        }
       }
-      if (payment.method === "cash") {
-        paymentSummary.cash += payment.amount;
-      }
-      if (payment.method === "online") {
-        paymentSummary.online += payment.amount;
-      }
-      if (payment.method === "card") {
-        paymentSummary.card += payment.amount;
-      }
-    });
+    }
 
-    const productTotals = new Map<string, number>();
-    orders.forEach((order) => {
-      order.items.forEach((item) => {
-        productTotals.set(item.name, (productTotals.get(item.name) || 0) + item.qty);
-      });
-    });
-
-    const bestSelling = Array.from(productTotals.entries())
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 5)
-      .map(([name, qty]) => ({ name, qty }));
-
-    const remainingStock = await Product.find({ outletId })
-      .select("name onHandQty")
-      .lean();
-
-    res.json({
-      data: {
-        totalSales,
-        totalOrders,
-        paymentSummary,
-        bestSelling,
-        remainingStock
+    const productSales: Record<string, { name: string; qty: number; total: number }> = {};
+    for (const order of orders) {
+      for (const item of order.items) {
+        if (!productSales[item.name]) productSales[item.name] = { name: item.name, qty: 0, total: 0 };
+        productSales[item.name].qty += item.qty;
+        productSales[item.name].total += item.lineTotal;
       }
-    });
-  } catch (error) {
-    next(error);
-  }
+    }
+    const bestSelling = Object.values(productSales).sort((a, b) => b.qty - a.qty).slice(0, 10);
+    return res.json({ data: { totalSales, totalOrders, paymentSummary, bestSelling } });
+  } catch (error) { return next(error); }
+}
+
+export async function getOutletComparison(req: AuthedRequest, res: Response, next: NextFunction) {
+  try {
+    const { businessId } = req.user!;
+    const { from, to } = req.query;
+    const { start, end } = from && to
+      ? { start: new Date(from as string), end: new Date(to as string) }
+      : todayRange();
+
+    const outlets = await Outlet.find({ businessId, isActive: true }).lean();
+    const result = await Promise.all(outlets.map(async (outlet) => {
+      const orders = await Order.find({
+        businessId, outletId: outlet._id, status: "completed",
+        createdAt: { $gte: start, $lte: end }
+      }).select("total").lean();
+      const revenue = orders.reduce((s, o) => s + o.total, 0);
+      return { outlet: { id: outlet._id, name: outlet.name }, revenue, orders: orders.length };
+    }));
+    return res.json({ comparison: result });
+  } catch (error) { return next(error); }
+}
+
+export async function getRevenueTrend(req: AuthedRequest, res: Response, next: NextFunction) {
+  try {
+    const { businessId } = req.user!;
+    const { outletId, days = 7 } = req.query;
+    const numDays = Number(days);
+    const trend = [];
+    for (let i = numDays - 1; i >= 0; i--) {
+      const d = new Date(); d.setDate(d.getDate() - i);
+      const start = new Date(d); start.setHours(0, 0, 0, 0);
+      const end = new Date(d); end.setHours(23, 59, 59, 999);
+      const query: Record<string, unknown> = { businessId, status: "completed", createdAt: { $gte: start, $lte: end } };
+      if (outletId) query.outletId = outletId;
+      const orders = await Order.find(query).select("total").lean();
+      const revenue = orders.reduce((s, o) => s + o.total, 0);
+      trend.push({ date: start.toISOString().split("T")[0], revenue, orders: orders.length });
+    }
+    return res.json({ trend });
+  } catch (error) { return next(error); }
 }

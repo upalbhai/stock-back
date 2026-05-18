@@ -1,33 +1,13 @@
 import { Router } from "express";
-import { z } from "zod";
-import {
-  getStockAlerts,
-  getStockSummary,
-  setOpeningStock
-} from "../controllers/stockController.js";
+import { getStockSummary, getStockAlerts, getStockHistory, adjustStock, createTransfer, approveTransfer, listTransfers } from "../controllers/stockController.js";
 import { requireAuth } from "../middlewares/auth.js";
-import { requireRole } from "../middlewares/roles.js";
-import { validate } from "../middlewares/validate.js";
+import { requirePermission } from "../middlewares/permission.js";
 
 export const stockRouter = Router();
-
-const openingSchema = z.object({
-  outletId: z.string().min(1),
-  date: z.string().optional(),
-  items: z.array(
-    z.object({
-      productId: z.string().min(1),
-      openingQty: z.number().min(0)
-    })
-  )
-});
-
-stockRouter.post(
-  "/opening",
-  requireAuth,
-  requireRole(["owner", "manager"]),
-  validate(openingSchema),
-  setOpeningStock
-);
-stockRouter.get("/alerts", requireAuth, getStockAlerts);
 stockRouter.get("/summary", requireAuth, getStockSummary);
+stockRouter.get("/alerts", requireAuth, getStockAlerts);
+stockRouter.get("/history", requireAuth, requirePermission("inventory", "read"), getStockHistory);
+stockRouter.post("/adjust", requireAuth, requirePermission("inventory", "update"), adjustStock);
+stockRouter.get("/transfers", requireAuth, requirePermission("stock_transfers", "read"), listTransfers);
+stockRouter.post("/transfers", requireAuth, requirePermission("stock_transfers", "create"), createTransfer);
+stockRouter.post("/transfers/:id/approve", requireAuth, requirePermission("stock_transfers", "approve"), approveTransfer);
