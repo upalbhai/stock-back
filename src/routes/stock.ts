@@ -6,6 +6,7 @@ import {
   setOpeningStock
 } from "../controllers/stockController.js";
 import { requireAuth } from "../middlewares/auth.js";
+import { requireRole } from "../middlewares/roles.js";
 import { validate } from "../middlewares/validate.js";
 
 export const stockRouter = Router();
@@ -21,6 +22,12 @@ const openingSchema = z.object({
   )
 });
 
-stockRouter.post("/opening", requireAuth, validate(openingSchema), setOpeningStock);
+stockRouter.post(
+  "/opening",
+  requireAuth,
+  requireRole(["owner", "manager"]),
+  validate(openingSchema),
+  setOpeningStock
+);
 stockRouter.get("/alerts", requireAuth, getStockAlerts);
 stockRouter.get("/summary", requireAuth, getStockSummary);

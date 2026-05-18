@@ -10,6 +10,7 @@ export async function setOpeningStock(
   try {
     const { outletId, date, items } = req.body;
     const entryDate = date ? new Date(date) : new Date();
+    entryDate.setHours(0, 0, 0, 0);
 
     await Promise.all(
       items.map(async (item: { productId: string; openingQty: number }) => {
@@ -17,13 +18,18 @@ export async function setOpeningStock(
           $set: { onHandQty: item.openingQty }
         });
 
-        await StockEntry.create({
-          outletId,
-          productId: item.productId,
-          date: entryDate,
-          openingQty: item.openingQty,
-          closingQty: item.openingQty
-        });
+        await StockEntry.findOneAndUpdate(
+          { outletId, productId: item.productId, date: entryDate },
+          {
+            $set: {
+              openingQty: item.openingQty,
+              closingQty: item.openingQty,
+              soldQty: 0,
+              wastageQty: 0
+            }
+          },
+          { upsert: true, new: true }
+        );
       })
     );
 

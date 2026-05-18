@@ -2,6 +2,8 @@ import type { Request, Response, NextFunction } from "express";
 import { Order } from "../models/Order.js";
 import { Payment } from "../models/Payment.js";
 import { Product } from "../models/Product.js";
+import { StockEntry } from "../models/StockEntry.js";
+import { getDayRange } from "../utils/date.js";
 
 export async function createOrder(
   req: Request,
@@ -47,18 +49,43 @@ export async function createOrder(
       createdBy
     });
 
+    const { start: dayStart } = getDayRange();
+
     await Promise.all(
-      normalizedItems.map((item: { productId: string; qty: number }) =>
-        Product.findByIdAndUpdate(item.productId, {
+      normalizedItems.map(async (item: { productId: string; qty: number }) => {
+        await Product.findByIdAndUpdate(item.productId, {
           $inc: { onHandQty: -item.qty }
-        })
-      )
+        });
+
+        await StockEntry.findOneAndUpdate(
+          { outletId, productId: item.productId, date: dayStart },
+          {
+            $inc: { soldQty: item.qty, closingQty: -item.qty },
+            $setOnInsert: {
+              openingQty: 0,
+              outletId,
+              productId: item.productId,
+              date: dayStart
+            }
+          },
+          { upsert: true, new: true }
+        );
+      })
     );
 
-    const method = payment?.method ?? "cash";
     const cash = payment?.cash ?? 0;
     const online = payment?.online ?? 0;
     const card = payment?.card ?? 0;
+    const parts = [cash, online, card].filter((value) => value > 0);
+    const derivedMethod =
+      parts.length > 1
+        ? "split"
+        : online > 0
+          ? "online"
+          : card > 0
+            ? "card"
+            : "cash";
+    const method = payment?.method ?? derivedMethod;
     const amount = method === "split" ? cash + online + card : total;
 
     await Payment.create({

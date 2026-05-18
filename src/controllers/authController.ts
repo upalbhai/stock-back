@@ -50,10 +50,11 @@ export async function register(
     }
 
     const pinHash = await bcrypt.hash(pin, 10);
+    const finalRole = role || (outletName ? "owner" : "staff");
     const user = await User.create({
       name,
       phone,
-      role,
+      role: finalRole,
       outletId: finalOutletId,
       pinHash
     });
