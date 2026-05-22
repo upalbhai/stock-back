@@ -26,6 +26,14 @@ const businessSchema = new Schema(
       enableOnlineOrders: { type: Boolean, default: false },
       defaultTaxRate: { type: Number, default: 0 }
     }
+    ,
+    status: {
+      type: String,
+      enum: ["pending", "active", "suspended", "banned"],
+      default: "active"
+    },
+    approvedAt: { type: Date },
+    approvedBy: { type: Schema.Types.ObjectId, ref: "User" }
   },
   { timestamps: true }
 );

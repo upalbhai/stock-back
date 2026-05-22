@@ -1,13 +1,14 @@
-function validate(schema) {
+function validate(schema, source = "body") {
   return (req, res, next) => {
-    const result = schema.safeParse(req.body);
+    const input = req[source];
+    const result = schema.safeParse(input);
     if (!result.success) {
       return res.status(400).json({
         message: "Validation error",
         errors: result.error.flatten().fieldErrors
       });
     }
-    req.body = result.data;
+    req[source] = result.data;
     return next();
   };
 }

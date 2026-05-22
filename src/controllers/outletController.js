@@ -1,4 +1,5 @@
 import { Outlet } from "../models/Outlet.js";
+import { Business } from "../models/Business.js";
 import { AuditLog } from "../models/AuditLog.js";
 function makeCode(name) {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 16) + "-" + Math.random().toString(36).slice(2, 6);
@@ -20,6 +21,10 @@ async function createOutlet(req, res, next) {
   try {
     const { businessId } = req.user;
     const { name, address, phone, email, taxEnabled, defaultTaxRate, billingModes, settings } = req.body;
+    // determine if this outlet should be active immediately or await admin approval
+    const business = await Business.findById(businessId).lean();
+    const existingCount = await Outlet.countDocuments({ businessId });
+    const shouldBePending = business?.status !== "active" || existingCount >= 1;
     const outlet = await Outlet.create({
       businessId,
       name,
@@ -30,18 +35,20 @@ async function createOutlet(req, res, next) {
       taxEnabled: taxEnabled ?? false,
       defaultTaxRate: defaultTaxRate ?? 0,
       billingModes: billingModes ?? ["takeaway", "quick"],
-      settings
+      settings,
+      status: shouldBePending ? "pending" : "active",
+      isActive: !shouldBePending
     });
     await AuditLog.create({
       businessId,
       actorId: req.user?.userId,
       actorName: req.user?.userId,
       module: "outlets",
-      action: "create",
+      action: outlet.status === "pending" ? "create_pending" : "create",
       targetType: "Outlet",
       targetId: outlet._id,
       targetName: outlet.name,
-      message: `Outlet created: ${outlet.name}`,
+      message: `Outlet created: ${outlet.name} (status: ${outlet.status})`,
       ip: req.ip
     });
     return res.status(201).json({ outlet });

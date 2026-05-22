@@ -3,7 +3,7 @@ import cors from "cors";
 import helmet from "helmet";
 import morgan from "morgan";
 import rateLimit from "express-rate-limit";
-import { env } from "./config/env.js";
+import { corsOrigins, env } from "./config/env.js";
 import { authRouter } from "./routes/auth.js";
 import { businessRouter } from "./routes/businesses.js";
 import { outletRouter } from "./routes/outlets.js";
@@ -18,6 +18,11 @@ import { expenseRouter } from "./routes/expenses.js";
 import { auditRouter } from "./routes/audit-logs.js";
 import { adminRouter } from "./routes/admin.js";
 import { errorHandler } from "./middlewares/error.js";
+function isAllowedOrigin(origin) {
+  if (!origin) return true;
+  if (corsOrigins.includes(origin)) return true;
+  return /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin);
+}
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1e3,
   // 15 minutes
@@ -27,7 +32,15 @@ const authLimiter = rateLimit({
 function createApp() {
   const app = express();
   app.use(helmet());
-  app.use(cors({ origin: env.CORS_ORIGIN, credentials: true }));
+  app.use(cors({
+    origin(origin, callback) {
+      if (isAllowedOrigin(origin)) {
+        return callback(null, true);
+      }
+      return callback(new Error(`CORS blocked for origin: ${origin}`));
+    },
+    credentials: true
+  }));
   app.use(express.json({ limit: "2mb" }));
   app.use(morgan("dev"));
   app.get("/api/health", (_req, res) => {

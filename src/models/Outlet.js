@@ -24,6 +24,14 @@ const outletSchema = new Schema(
       requireCustomerName: { type: Boolean, default: false },
       printReceiptDefault: { type: Boolean, default: false }
     }
+    ,
+    status: {
+      type: String,
+      enum: ["pending", "active", "suspended", "banned"],
+      default: "active"
+    },
+    approvedAt: { type: Date },
+    approvedBy: { type: Schema.Types.ObjectId, ref: "User" }
   },
   { timestamps: true }
 );

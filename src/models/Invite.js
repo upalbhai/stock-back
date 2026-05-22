@@ -10,6 +10,7 @@ const inviteSchema = new Schema(
       default: "staff"
     },
     phone: { type: String },
+    email: { type: String, lowercase: true, trim: true },
     // pre-filled on invite form
     name: { type: String },
     // pre-filled on invite form

@@ -4,6 +4,7 @@ const userSchema = new Schema(
     name: { type: String, required: true, trim: true },
     phone: { type: String, required: true, unique: true, trim: true },
     email: { type: String, trim: true, lowercase: true },
+    emailVerified: { type: Boolean, default: false },
     businessId: { type: Schema.Types.ObjectId, ref: "Business" },
     outletIds: { type: [Schema.Types.ObjectId], ref: "Outlet", default: [] },
     roleId: { type: Schema.Types.ObjectId, ref: "Role" },

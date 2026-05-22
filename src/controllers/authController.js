@@ -7,6 +7,9 @@ import { Business } from "../models/Business.js";
 import { Outlet } from "../models/Outlet.js";
 import { Role } from "../models/Role.js";
 import { AuditLog } from "../models/AuditLog.js";
+import { EmailOtp } from "../models/EmailOtp.js";
+import mailer from "../utils/mailer.js";
+import crypto from "crypto";
 function slugify(str) {
   return str.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 24) || "biz";
 }
@@ -16,11 +19,16 @@ function makeOutletCode(name) {
 function createToken(payload) {
   return jwt.sign(payload, env.JWT_SECRET, { expiresIn: "7d" });
 }
+
+function makeCode() {
+  return Math.floor(100000 + Math.random() * 900000).toString();
+}
 async function register(req, res, next) {
   try {
     const {
       name,
       phone,
+      email,
       pin,
       businessName,
       outletName,
@@ -43,12 +51,15 @@ async function register(req, res, next) {
         code: bCode,
         slug: bCode,
         plan: "free",
-        maxOutlets: 1
+        maxOutlets: 1,
+        status: "pending"
       });
       const outlet = await Outlet.create({
         businessId: business._id,
         name: outletName || businessName,
-        code: makeOutletCode(outletName || businessName)
+        code: makeOutletCode(outletName || businessName),
+        status: business.status === "active" ? "active" : "pending",
+        isActive: business.status === "active"
       });
       finalOutletId = outlet._id.toString();
     }
@@ -56,24 +67,16 @@ async function register(req, res, next) {
     const user = await User.create({
       name,
       phone,
+      email: email?.toLowerCase(),
       role: "owner",
       businessId: business?._id,
       outletIds: [finalOutletId],
-      pinHash
+      pinHash,
+      isActive: false
     });
     if (business) {
       await Business.findByIdAndUpdate(business._id, { ownerId: user._id });
     }
-    if (business) {
-      await createDefaultRoles(business._id.toString());
-    }
-    const token = createToken({
-      userId: user._id.toString(),
-      role: user.role,
-      businessId: business?._id?.toString(),
-      outletId: finalOutletId,
-      outletIds: [finalOutletId]
-    });
     await AuditLog.create({
       businessId: business?._id,
       actorId: user._id,
@@ -81,12 +84,20 @@ async function register(req, res, next) {
       actorRole: user.role,
       module: "auth",
       action: "register",
-      message: `New owner registered: ${user.name}`,
+      message: `New owner registered (awaiting approval): ${user.name}`,
       ip: req.ip,
       userAgent: req.headers["user-agent"]
     });
+    // send confirmation email to owner (if email provided)
+    if (req.body.email) {
+      try {
+        await mailer.sendRegistrationSubmitted(req.body.email, businessName);
+      } catch (e) {
+        console.warn("Failed to send registration email", e.message);
+      }
+    }
     return res.status(201).json({
-      token,
+      message: "Registration submitted. Awaiting admin approval.",
       user: {
         id: user._id,
         name: user.name,
@@ -209,5 +220,77 @@ async function createDefaultRoles(businessId) {
 export {
   getMe,
   login,
-  register
+  register,
+  createDefaultRoles
 };
+
+async function sendLoginOtp(req, res, next) {
+  try {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ message: "Email is required" });
+    const code = makeCode();
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+    await EmailOtp.create({ email: email.toLowerCase(), code, type: "login", expiresAt });
+    try {
+      await mailer.sendOtpEmail(email, code);
+    } catch (e) {
+      console.warn("Failed to send OTP email", e.message);
+    }
+    return res.json({ message: "OTP sent" });
+  } catch (error) {
+    return next(error);
+  }
+}
+
+async function verifyLoginOtp(req, res, next) {
+  try {
+    const { email, code } = req.body;
+    if (!email || !code) return res.status(400).json({ message: "Email and code are required" });
+    const otp = await EmailOtp.findOne({ email: email.toLowerCase(), code, used: false });
+    if (!otp) return res.status(400).json({ message: "Invalid code" });
+    if (new Date() > otp.expiresAt) return res.status(410).json({ message: "Code expired" });
+    otp.used = true;
+    await otp.save();
+    // find user by email
+    const user = await User.findOne({ email: email.toLowerCase() }).populate("roleId");
+    if (!user) return res.status(404).json({ message: "No user found for this email" });
+    // mark email verified for user
+    if (!user.emailVerified) {
+      user.emailVerified = true;
+      await user.save();
+    }
+    // if user not active yet, return informative message
+    if (!user.isActive) {
+      return res.json({ message: "Email verified. Account awaiting admin approval." });
+    }
+    // ensure business and outlet active
+    if (user.businessId) {
+      const biz = await Business.findById(user.businessId).lean();
+      if (biz && biz.status !== "active") return res.status(403).json({ message: "Business not active" });
+    }
+    const primaryOutletId = user.outletIds?.[0]?.toString() || void 0;
+    const token = createToken({
+      userId: user._id.toString(),
+      role: user.role,
+      businessId: user.businessId?.toString(),
+      outletId: primaryOutletId,
+      outletIds: user.outletIds?.map((id) => id.toString()) || [],
+      roleId: user.roleId?.toString()
+    });
+    await AuditLog.create({
+      businessId: user.businessId,
+      actorId: user._id,
+      actorName: user.name,
+      actorRole: user.role,
+      module: "auth",
+      action: "otp_login",
+      message: `User logged in via OTP`,
+      ip: req.ip
+    });
+    return res.json({ token, user: { id: user._id, name: user.name, role: user.role, businessId: user.businessId } });
+  } catch (error) {
+    return next(error);
+  }
+}
+
+export { sendLoginOtp, verifyLoginOtp };

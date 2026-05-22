@@ -1,6 +1,7 @@
 import { Business } from "../models/Business.js";
 import { User } from "../models/User.js";
 import { AuditLog } from "../models/AuditLog.js";
+import { createDefaultRoles } from "./authController.js";
 import jwt from "jsonwebtoken";
 import { env } from "../config/env.js";
 async function adminListBusinesses(req, res, next) {
@@ -119,11 +120,133 @@ async function adminPlatformStats(req, res, next) {
     return next(error);
   }
 }
+async function adminApproveBusiness(req, res, next) {
+  try {
+    const business = await Business.findById(req.params.id);
+    if (!business) return res.status(404).json({ message: "Business not found" });
+    if (business.status === "active") return res.status(400).json({ message: "Business already active" });
+    business.status = "active";
+    business.isActive = true;
+    business.approvedAt = new Date();
+    business.approvedBy = req.user?.userId;
+    await business.save();
+    // activate owner user if present
+    if (business.ownerId) {
+      await User.findByIdAndUpdate(business.ownerId, { $set: { isActive: true } });
+    }
+    // create default roles for the business
+    await createDefaultRoles(business._id.toString());
+    await AuditLog.create({
+      actorId: req.user?.userId,
+      module: "admin",
+      action: "approve_business",
+      targetType: "Business",
+      targetId: business._id,
+      targetName: business.name,
+      message: `Business approved: ${business.name}`,
+      ip: req.ip
+    });
+    // notify owner by email if available
+    const owner = await User.findById(business.ownerId).lean();
+    try {
+      await (await import("../utils/mailer.js")).default.sendBusinessApproved(owner?.email, business.name);
+    } catch (e) {
+      console.warn("Failed to send approval email", e.message);
+    }
+    return res.json({ business });
+  } catch (error) {
+    return next(error);
+  }
+}
+
+async function adminSetBusinessStatus(req, res, next) {
+  try {
+    const { status } = req.body;
+    const allowed = ["pending", "active", "suspended", "banned"];
+    if (!allowed.includes(status)) return res.status(400).json({ message: "Invalid status" });
+    const business = await Business.findByIdAndUpdate(req.params.id, { $set: { status, isActive: status === "active" } }, { new: true });
+    if (!business) return res.status(404).json({ message: "Business not found" });
+    await AuditLog.create({
+      actorId: req.user?.userId,
+      module: "admin",
+      action: "set_business_status",
+      targetType: "Business",
+      targetId: business._id,
+      targetName: business.name,
+      message: `Business status set to ${status}: ${business.name}`,
+      ip: req.ip
+    });
+    return res.json({ business });
+  } catch (error) {
+    return next(error);
+  }
+}
+async function adminApproveOutlet(req, res, next) {
+  try {
+    const outlet = await (await import("../models/Outlet.js")).Outlet.findById(req.params.id);
+    if (!outlet) return res.status(404).json({ message: "Outlet not found" });
+    if (outlet.status === "active") return res.status(400).json({ message: "Outlet already active" });
+    outlet.status = "active";
+    outlet.isActive = true;
+    outlet.approvedAt = new Date();
+    outlet.approvedBy = req.user?.userId;
+    await outlet.save();
+    await AuditLog.create({
+      actorId: req.user?.userId,
+      module: "admin",
+      action: "approve_outlet",
+      targetType: "Outlet",
+      targetId: outlet._id,
+      targetName: outlet.name,
+      message: `Outlet approved: ${outlet.name}`,
+      ip: req.ip
+    });
+    // notify outlet email or owner
+    try {
+      const owner = await User.findById(outlet.businessId ? (await Business.findById(outlet.businessId)).ownerId : null).lean();
+      const notifyEmail = outlet.email || owner?.email;
+      await (await import("../utils/mailer.js")).default.sendOutletApproved(notifyEmail, outlet.name);
+    } catch (e) {
+      console.warn("Failed to send outlet approval email", e.message);
+    }
+    return res.json({ outlet });
+  } catch (error) {
+    return next(error);
+  }
+}
+
+async function adminSetOutletStatus(req, res, next) {
+  try {
+    const { status } = req.body;
+    const allowed = ["pending", "active", "suspended", "banned"];
+    if (!allowed.includes(status)) return res.status(400).json({ message: "Invalid status" });
+    const OutletModel = (await import("../models/Outlet.js")).Outlet;
+    const outlet = await OutletModel.findByIdAndUpdate(req.params.id, { $set: { status, isActive: status === "active" } }, { new: true });
+    if (!outlet) return res.status(404).json({ message: "Outlet not found" });
+    await AuditLog.create({
+      actorId: req.user?.userId,
+      module: "admin",
+      action: "set_outlet_status",
+      targetType: "Outlet",
+      targetId: outlet._id,
+      targetName: outlet.name,
+      message: `Outlet status set to ${status}: ${outlet.name}`,
+      ip: req.ip
+    });
+    return res.json({ outlet });
+  } catch (error) {
+    return next(error);
+  }
+}
 export {
   adminImpersonate,
   adminListBusinesses,
   adminPlatformStats,
   adminStopImpersonation,
   adminToggleBusiness,
-  adminUpdatePlan
+  adminUpdatePlan,
+  adminApproveBusiness,
+  adminSetBusinessStatus,
+  adminApproveOutlet,
+  adminSetOutletStatus
 };

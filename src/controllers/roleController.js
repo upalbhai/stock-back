@@ -1,4 +1,5 @@
 import { Role, MODULES, ACTIONS } from "../models/Role.js";
+import { canAssignPermissions } from "../utils/permissions.js";
 import { AuditLog } from "../models/AuditLog.js";
 async function listRoles(req, res, next) {
   try {
@@ -23,6 +24,11 @@ async function createRole(req, res, next) {
   try {
     const { businessId } = req.user;
     const { name, description, permissions, outletScope, outletIds } = req.body;
+    // ensure requester is allowed to assign the requested permissions
+    if (permissions && permissions.length) {
+      const ok = await canAssignPermissions(req, permissions);
+      if (!ok) return res.status(403).json({ message: "Cannot assign permissions you don't have" });
+    }
     const role = await Role.create({
       businessId,
       name,
@@ -55,6 +61,10 @@ async function updateRole(req, res, next) {
     if (!existing) return res.status(404).json({ message: "Role not found" });
     if (existing.isSystem) return res.status(403).json({ message: "Cannot modify system roles" });
     const { name, description, permissions, outletScope, outletIds } = req.body;
+    if (permissions && permissions.length) {
+      const ok = await canAssignPermissions(req, permissions);
+      if (!ok) return res.status(403).json({ message: "Cannot assign permissions you don't have" });
+    }
     const role = await Role.findByIdAndUpdate(
       req.params.id,
       { $set: { name, description, permissions, outletScope, outletIds } },

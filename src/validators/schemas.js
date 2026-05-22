@@ -1,0 +1,227 @@
+import { z } from "zod";
+
+export const emailSchema = z.string().trim().email("Enter a valid email address");
+export const phoneSchema = z.string().trim().min(8, "Enter a valid phone number").max(16, "Enter a valid phone number");
+export const pinSchema = z.string().trim().min(4, "PIN must be at least 4 digits").max(6, "PIN must be at most 6 digits");
+
+export const registerSchema = z.object({
+  name: z.string().trim().min(2, "Name is required"),
+  phone: phoneSchema,
+  email: emailSchema,
+  pin: pinSchema,
+  businessName: z.string().trim().min(2, "Business name is required"),
+  outletName: z.string().trim().min(2).optional(),
+  outletId: z.string().trim().optional()
+});
+
+export const loginSchema = z.object({
+  phone: phoneSchema,
+  pin: pinSchema
+});
+
+export const otpEmailSchema = z.object({
+  email: emailSchema
+});
+
+export const otpVerifySchema = z.object({
+  email: emailSchema,
+  code: z.string().trim().min(4, "Code is required").max(8, "Code is invalid")
+});
+
+export const businessUpdateSchema = z.object({
+  name: z.string().trim().min(2).optional(),
+  timezone: z.string().trim().min(1).optional(),
+  currency: z.string().trim().min(1).optional(),
+  logo: z.string().trim().url().optional().or(z.literal("")),
+  address: z.string().trim().optional(),
+  gstNumber: z.string().trim().optional(),
+  phone: phoneSchema.optional(),
+  email: emailSchema.optional(),
+  settings: z.object({
+    requireCustomerName: z.boolean().optional(),
+    enableOnlineOrders: z.boolean().optional(),
+    defaultTaxRate: z.number().min(0).max(100).optional()
+  }).partial().optional()
+});
+
+export const outletCreateSchema = z.object({
+  name: z.string().trim().min(2, "Outlet name is required"),
+  address: z.string().trim().optional(),
+  phone: phoneSchema.optional(),
+  email: emailSchema.optional(),
+  taxEnabled: z.boolean().optional(),
+  defaultTaxRate: z.number().min(0).max(100).optional(),
+  billingModes: z.array(z.enum(["takeaway", "dine_in", "parcel", "quick"])).optional(),
+  settings: z.object({
+    enableUPI: z.boolean().optional(),
+    enableCard: z.boolean().optional(),
+    enableCash: z.boolean().optional(),
+    enableWallet: z.boolean().optional(),
+    requireCustomerName: z.boolean().optional(),
+    printReceiptDefault: z.boolean().optional()
+  }).partial().optional()
+});
+
+export const outletUpdateSchema = outletCreateSchema.extend({
+  managerId: z.string().trim().optional(),
+  isActive: z.boolean().optional()
+}).partial();
+
+export const userCreateSchema = z.object({
+  name: z.string().trim().min(2, "Name is required"),
+  phone: phoneSchema,
+  email: emailSchema.optional(),
+  pin: pinSchema,
+  role: z.enum(["superadmin", "owner", "manager", "staff"]).optional(),
+  roleId: z.string().trim().optional(),
+  outletIds: z.array(z.string().trim()).optional()
+});
+
+export const userUpdateSchema = z.object({
+  name: z.string().trim().min(2).optional(),
+  email: emailSchema.optional(),
+  role: z.enum(["superadmin", "owner", "manager", "staff"]).optional(),
+  roleId: z.string().trim().optional(),
+  outletIds: z.array(z.string().trim()).optional(),
+  isActive: z.boolean().optional(),
+  emailVerified: z.boolean().optional(),
+  pin: pinSchema.optional()
+});
+
+export const inviteCreateSchema = z.object({
+  outletIds: z.array(z.string().trim()).optional(),
+  roleId: z.string().trim().optional(),
+  role: z.enum(["manager", "staff"]).optional(),
+  name: z.string().trim().min(2).optional(),
+  phone: phoneSchema.optional(),
+  email: emailSchema.optional()
+});
+
+export const inviteAcceptSchema = z.object({
+  name: z.string().trim().min(2, "Name is required"),
+  pin: pinSchema
+});
+
+export const roleCreateSchema = z.object({
+  name: z.string().trim().min(2, "Role name is required"),
+  description: z.string().trim().optional(),
+  permissions: z.array(z.object({
+    module: z.string().trim().min(1),
+    actions: z.array(z.string().trim().min(1)).default([])
+  })).optional(),
+  outletScope: z.enum(["all", "restricted"]).optional(),
+  outletIds: z.array(z.string().trim()).optional()
+});
+
+export const roleUpdateSchema = roleCreateSchema.partial();
+
+export const adminStatusSchema = z.object({
+  status: z.enum(["pending", "active", "suspended", "banned"])
+});
+
+export const adminPlanSchema = z.object({
+  plan: z.enum(["free", "starter", "pro", "enterprise"]).optional(),
+  planExpiresAt: z.string().datetime().optional().or(z.date().optional()),
+  maxOutlets: z.number().int().min(1).optional()
+});
+
+export const adminImpersonateSchema = z.object({
+  targetUserId: z.string().trim().min(1, "Target user is required")
+});
+
+export const idParamSchema = z.object({
+  id: z.string().trim().min(1, "ID is required")
+});
+
+export const categoryCreateSchema = z.object({
+  name: z.string().trim().min(2, "Category name is required"),
+  parentId: z.string().trim().optional().nullable(),
+  outletId: z.string().trim().optional().nullable(),
+  icon: z.string().trim().optional(),
+  color: z.string().trim().optional(),
+  image: z.string().trim().optional(),
+  sortOrder: z.number().int().optional(),
+  description: z.string().trim().optional()
+}).passthrough();
+
+export const categoryUpdateSchema = categoryCreateSchema.partial().passthrough();
+
+export const productCreateSchema = z.object({
+  outletId: z.string().trim().min(1, "Outlet is required"),
+  name: z.string().trim().min(2, "Product name is required"),
+  unit: z.string().trim().optional(),
+  price: z.number().min(0, "Price is required"),
+  categoryId: z.string().trim().optional().nullable(),
+  description: z.string().trim().optional(),
+  sku: z.string().trim().optional(),
+  barcode: z.string().trim().optional(),
+  costPrice: z.number().min(0).optional(),
+  taxRate: z.number().min(0).optional(),
+  gstRate: z.number().min(0).optional(),
+  onHandQty: z.number().min(0).optional(),
+  lowStockThreshold: z.number().min(0).optional(),
+  isFeatured: z.boolean().optional(),
+  image: z.string().trim().optional(),
+  tags: z.array(z.string().trim()).optional(),
+  sortOrder: z.number().int().optional()
+}).passthrough();
+
+export const productUpdateSchema = productCreateSchema.partial().passthrough();
+
+export const orderItemSchema = z.object({
+  productId: z.string().trim().optional(),
+  name: z.string().trim().min(1, "Item name is required"),
+  qty: z.number().positive("Quantity is required"),
+  price: z.number().min(0, "Price is required"),
+  taxRate: z.number().min(0).optional(),
+  discount: z.number().min(0).optional(),
+  unit: z.string().trim().optional(),
+  notes: z.string().trim().optional()
+});
+
+export const orderCreateSchema = z.object({
+  outletId: z.string().trim().min(1, "Outlet is required"),
+  billingMode: z.enum(["takeaway", "dine_in", "parcel", "quick"]).optional(),
+  items: z.array(orderItemSchema).min(1, "At least one item is required"),
+  discount: z.number().min(0).optional(),
+  notes: z.string().trim().optional(),
+  customerName: z.string().trim().optional(),
+  customerPhone: z.string().trim().optional(),
+  payment: z.object({
+    method: z.enum(["cash", "upi", "card", "wallet", "split"]).optional(),
+    amount: z.number().min(0).optional(),
+    split: z.record(z.number().min(0)).optional()
+  }).optional()
+}).passthrough();
+
+export const refundOrderSchema = z.object({
+  reason: z.string().trim().min(2, "Refund reason is required")
+}).passthrough();
+
+export const stockAdjustSchema = z.object({
+  productId: z.string().trim().min(1, "Product is required"),
+  outletId: z.string().trim().min(1, "Outlet is required"),
+  qty: z.number(),
+  type: z.enum(["adjustment", "opening", "sale", "return", "transfer_in", "transfer_out"]).optional(),
+  note: z.string().trim().optional()
+}).passthrough();
+
+export const stockTransferSchema = z.object({
+  fromOutletId: z.string().trim().min(1, "Source outlet is required"),
+  toOutletId: z.string().trim().min(1, "Destination outlet is required"),
+  items: z.array(z.object({
+    productId: z.string().trim().min(1, "Product is required"),
+    productName: z.string().trim().optional(),
+    qty: z.number().positive("Quantity is required"),
+    unit: z.string().trim().optional()
+  })).min(1, "At least one item is required"),
+  note: z.string().trim().optional()
+}).passthrough();
+
+export const expenseCreateSchema = z.object({
+  outletId: z.string().trim().min(1, "Outlet is required"),
+  category: z.string().trim().min(2, "Category is required"),
+  amount: z.number().positive("Amount is required"),
+  note: z.string().trim().optional(),
+  date: z.string().datetime().optional()
+}).passthrough();
