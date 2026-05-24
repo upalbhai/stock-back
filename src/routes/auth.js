@@ -1,15 +1,20 @@
 import { Router } from "express";
-import { register, login, getMe } from "../controllers/authController.js";
+import { register, login, loginWithEmail, getMe, forgotPassword, resetPassword, checkEmail } from "../controllers/authController.js";
 import { sendLoginOtp, verifyLoginOtp } from "../controllers/authController.js";
 import { requireAuth } from "../middlewares/auth.js";
 import { validate } from "../middlewares/validate.js";
-import { loginSchema, otpEmailSchema, otpVerifySchema, registerSchema } from "../validators/schemas.js";
+import { loginSchema, emailLoginSchema, otpEmailSchema, otpVerifySchema, registerSchema, forgotPasswordSchema, resetPasswordSchema } from "../validators/schemas.js";
+
 const authRouter = Router();
+
 authRouter.post("/register", validate(registerSchema), register);
-authRouter.post("/login", validate(loginSchema), login);
+authRouter.post("/check-email", validate(otpEmailSchema), checkEmail);
+authRouter.post("/login", validate(emailLoginSchema), loginWithEmail);
+authRouter.post("/login-pin", validate(loginSchema), login);
 authRouter.post("/send-otp", validate(otpEmailSchema), sendLoginOtp);
 authRouter.post("/verify-otp", validate(otpVerifySchema), verifyLoginOtp);
+authRouter.post("/forgot-password", validate(forgotPasswordSchema), forgotPassword);
+authRouter.post("/reset-password", validate(resetPasswordSchema), resetPassword);
 authRouter.get("/me", requireAuth, getMe);
-export {
-  authRouter
-};
+
+export { authRouter };

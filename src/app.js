@@ -17,7 +17,10 @@ import { roleRouter } from "./routes/roles.js";
 import { expenseRouter } from "./routes/expenses.js";
 import { auditRouter } from "./routes/audit-logs.js";
 import { adminRouter } from "./routes/admin.js";
+import { planRouter } from "./routes/plans.js";
+import { paymentRouter } from "./routes/payments.js";
 import { errorHandler } from "./middlewares/error.js";
+import { requireActiveSubscription } from "./middlewares/subscription.js";
 function isAllowedOrigin(origin) {
   if (!origin) return true;
   if (corsOrigins.includes(origin)) return true;
@@ -47,18 +50,23 @@ function createApp() {
     res.json({ status: "ok", timestamp: (/* @__PURE__ */ new Date()).toISOString() });
   });
   app.use("/api/auth", authLimiter, authRouter);
-  app.use("/api/businesses", businessRouter);
-  app.use("/api/outlets", outletRouter);
-  app.use("/api/categories", categoryRouter);
-  app.use("/api/products", productRouter);
-  app.use("/api/stock", stockRouter);
-  app.use("/api/orders", orderRouter);
-  app.use("/api/reports", reportRouter);
-  app.use("/api/expenses", expenseRouter);
-  app.use("/api/users", userRouter);
-  app.use("/api/roles", roleRouter);
-  app.use("/api/audit-logs", auditRouter);
   app.use("/api/admin", adminRouter);
+  app.use("/api/plans", planRouter);
+  app.use("/api/payments", paymentRouter);
+  
+  // Subscription-protected routes
+  app.use("/api/businesses", requireActiveSubscription, businessRouter);
+  app.use("/api/outlets", requireActiveSubscription, outletRouter);
+  app.use("/api/categories", requireActiveSubscription, categoryRouter);
+  app.use("/api/products", requireActiveSubscription, productRouter);
+  app.use("/api/stock", requireActiveSubscription, stockRouter);
+  app.use("/api/orders", requireActiveSubscription, orderRouter);
+  app.use("/api/reports", requireActiveSubscription, reportRouter);
+  app.use("/api/expenses", requireActiveSubscription, expenseRouter);
+  app.use("/api/users", requireActiveSubscription, userRouter);
+  app.use("/api/roles", requireActiveSubscription, roleRouter);
+  app.use("/api/audit-logs", requireActiveSubscription, auditRouter);
+  
   app.use(errorHandler);
   return app;
 }

@@ -1,5 +1,6 @@
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
+import mongoose from "mongoose";
 import { v4 as uuidv4 } from "uuid";
 import { env } from "../config/env.js";
 import { User } from "../models/User.js";
@@ -10,6 +11,7 @@ import { AuditLog } from "../models/AuditLog.js";
 import { EmailOtp } from "../models/EmailOtp.js";
 import mailer from "../utils/mailer.js";
 import crypto from "crypto";
+
 function slugify(str) {
   return str.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 24) || "biz";
 }
@@ -19,64 +21,95 @@ function makeOutletCode(name) {
 function createToken(payload) {
   return jwt.sign(payload, env.JWT_SECRET, { expiresIn: "7d" });
 }
-
 function makeCode() {
   return Math.floor(100000 + Math.random() * 900000).toString();
 }
+
+// ---------- REGISTER (email + password, auto-trial) ----------
 async function register(req, res, next) {
   try {
-    const {
-      name,
-      phone,
-      email,
-      pin,
-      businessName,
-      outletName,
-      outletId
-    } = req.body;
+    const { name, email, password, phone, businessName, outletName, outletId } = req.body;
+
     if (!businessName && !outletId) {
       return res.status(400).json({ message: "businessName or outletId is required" });
     }
-    const existing = await User.findOne({ phone });
-    if (existing) {
-      return res.status(409).json({ message: "User already exists" });
+
+    // Check existing by email
+    const existingEmail = await User.findOne({ email: email.toLowerCase() });
+    if (existingEmail) {
+      return res.status(409).json({ message: "An account with this email already exists" });
     }
+
+    // Check existing by phone if provided
+    if (phone) {
+      const existingPhone = await User.findOne({ phone });
+      if (existingPhone) {
+        return res.status(409).json({ message: "An account with this phone already exists" });
+      }
+    }
+
     let business;
     let finalOutletId = outletId;
+    const userId = new mongoose.Types.ObjectId();
+
     if (!outletId && businessName) {
       const bSlug = slugify(businessName);
       const bCode = `${bSlug}-${uuidv4().slice(0, 4)}`;
+      const now = new Date();
+      const trialEnd = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000); // 7 days
+
       business = await Business.create({
         name: businessName,
         code: bCode,
         slug: bCode,
+        ownerId: userId,
         plan: "free",
         maxOutlets: 1,
-        status: "pending"
+        maxStaff: 5,
+        maxProducts: 50,
+        status: "active",
+        isActive: true,
+        subscriptionStatus: "trial",
+        trialStartedAt: now,
+        trialEndsAt: trialEnd,
+        approvedAt: now
       });
+
       const outlet = await Outlet.create({
         businessId: business._id,
         name: outletName || businessName,
         code: makeOutletCode(outletName || businessName),
-        status: business.status === "active" ? "active" : "pending",
-        isActive: business.status === "active"
+        status: "active",
+        isActive: true
       });
+
       finalOutletId = outlet._id.toString();
     }
-    const pinHash = await bcrypt.hash(pin, 10);
+
+    const passwordHash = await bcrypt.hash(password, 10);
+    const pinHash = phone ? await bcrypt.hash(password.slice(0, 6), 10) : undefined;
+
     const user = await User.create({
+      _id: userId,
       name,
-      phone,
-      email: email?.toLowerCase(),
+      phone: phone || undefined,
+      email: email.toLowerCase(),
       role: "owner",
       businessId: business?._id,
       outletIds: [finalOutletId],
+      passwordHash,
       pinHash,
-      isActive: false
+      isActive: true,
+      emailVerified: false
     });
+
+    // We don't need to findByIdAndUpdate ownerId anymore since we passed it in creation
+
+    // Create default roles
     if (business) {
-      await Business.findByIdAndUpdate(business._id, { ownerId: user._id });
+      await createDefaultRoles(business._id.toString());
     }
+
     await AuditLog.create({
       businessId: business?._id,
       actorId: user._id,
@@ -84,50 +117,108 @@ async function register(req, res, next) {
       actorRole: user.role,
       module: "auth",
       action: "register",
-      message: `New owner registered (awaiting approval): ${user.name}`,
+      message: `New owner registered with 7-day trial: ${user.name}`,
       ip: req.ip,
       userAgent: req.headers["user-agent"]
     });
-    // send confirmation email to owner (if email provided)
-    if (req.body.email) {
-      try {
-        await mailer.sendRegistrationSubmitted(req.body.email, businessName);
-      } catch (e) {
-        console.warn("Failed to send registration email", e.message);
-      }
+
+    // Send welcome email
+    try {
+      const trialEnd = business?.trialEndsAt;
+      await mailer.sendWelcomeEmail(email, name, trialEnd);
+    } catch (e) {
+      console.warn("Failed to send welcome email", e.message);
     }
+
+    // Send email verification OTP
+    try {
+      const code = makeCode();
+      const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+      await EmailOtp.create({ email: email.toLowerCase(), code, type: "login", expiresAt });
+      await mailer.sendOtpEmail(email, code);
+    } catch (e) {
+      console.warn("Failed to send verification OTP", e.message);
+    }
+
+    const primaryOutletId = user.outletIds?.[0]?.toString() || undefined;
+    const token = createToken({
+      userId: user._id.toString(),
+      role: user.role,
+      businessId: user.businessId?.toString(),
+      outletId: primaryOutletId,
+      outletIds: user.outletIds?.map((id) => id.toString()) || []
+    });
+
     return res.status(201).json({
-      message: "Registration submitted. Awaiting admin approval.",
+      token,
       user: {
         id: user._id,
         name: user.name,
         role: user.role,
         businessId: business?._id,
-        outletId: finalOutletId,
-        outletIds: [finalOutletId]
+        outletId: primaryOutletId,
+        outletIds: [finalOutletId],
+        subscriptionStatus: business?.subscriptionStatus || "trial",
+        trialEndsAt: business?.trialEndsAt
       }
     });
   } catch (error) {
     return next(error);
   }
 }
-async function login(req, res, next) {
+
+// ---------- LOGIN WITH EMAIL + PASSWORD ----------
+async function loginWithEmail(req, res, next) {
   try {
-    const { phone, pin } = req.body;
-    const user = await User.findOne({ phone, isActive: true }).populate("roleId").lean();
+    const { email, password } = req.body;
+    const user = await User.findOne({ email: email.toLowerCase(), isActive: true }).populate("roleId").lean();
+
     if (!user) {
-      return res.status(401).json({ message: "Invalid credentials" });
+      return res.status(401).json({ message: "Invalid email or password" });
     }
-    const isValid = await bcrypt.compare(pin, user.pinHash);
+    if (!user.passwordHash) {
+      return res.status(401).json({ message: "Password login not set up. Use OTP login instead." });
+    }
+
+    const isValid = await bcrypt.compare(password, user.passwordHash);
     if (!isValid) {
-      return res.status(401).json({ message: "Invalid credentials" });
+      return res.status(401).json({ message: "Invalid email or password" });
     }
+
+    // Check subscription status
+    let subscriptionStatus = null;
+    let trialEndsAt = null;
+    let trialExpired = false;
+
+    if (user.businessId && user.role !== "superadmin") {
+      const biz = await Business.findById(user.businessId).lean();
+      if (biz) {
+        subscriptionStatus = biz.subscriptionStatus;
+        trialEndsAt = biz.trialEndsAt;
+
+        if (biz.subscriptionStatus === "trial" && biz.trialEndsAt && new Date() > new Date(biz.trialEndsAt)) {
+          trialExpired = true;
+          await Business.findByIdAndUpdate(biz._id, { subscriptionStatus: "expired" });
+          subscriptionStatus = "expired";
+        }
+        if (biz.subscriptionStatus === "expired") {
+          trialExpired = true;
+        }
+        if (biz.subscriptionStatus === "active" && biz.currentPeriodEnd && new Date() > new Date(biz.currentPeriodEnd)) {
+          await Business.findByIdAndUpdate(biz._id, { subscriptionStatus: "expired" });
+          subscriptionStatus = "expired";
+          trialExpired = true;
+        }
+      }
+    }
+
     await User.findByIdAndUpdate(user._id, {
-      lastLoginAt: /* @__PURE__ */ new Date(),
+      lastLoginAt: new Date(),
       lastLoginIp: req.ip,
       lastLoginDevice: req.headers["user-agent"]?.slice(0, 200)
     });
-    const primaryOutletId = user.outletIds?.[0]?.toString() || void 0;
+
+    const primaryOutletId = user.outletIds?.[0]?.toString() || undefined;
     const token = createToken({
       userId: user._id.toString(),
       role: user.role,
@@ -136,6 +227,7 @@ async function login(req, res, next) {
       outletIds: user.outletIds?.map((id) => id.toString()) || [],
       roleId: user.roleId?.toString()
     });
+
     await AuditLog.create({
       businessId: user.businessId,
       actorId: user._id,
@@ -143,10 +235,11 @@ async function login(req, res, next) {
       actorRole: user.role,
       module: "auth",
       action: "login",
-      message: `User logged in`,
+      message: "User logged in via email+password",
       ip: req.ip,
       userAgent: req.headers["user-agent"]
     });
+
     return res.json({
       token,
       user: {
@@ -155,24 +248,299 @@ async function login(req, res, next) {
         role: user.role,
         businessId: user.businessId,
         outletId: primaryOutletId,
-        outletIds: user.outletIds?.map((id) => id.toString()) || []
+        outletIds: user.outletIds?.map((id) => id.toString()) || [],
+        subscriptionStatus,
+        trialEndsAt,
+        trialExpired
       }
     });
   } catch (error) {
     return next(error);
   }
 }
-async function getMe(req, res, next) {
+
+// ---------- LEGACY LOGIN WITH PHONE + PIN ----------
+async function login(req, res, next) {
   try {
-    const user = await User.findById(req.user?.userId).select("-pinHash -inviteToken").populate("roleId", "name permissions outletScope outletIds").lean();
+    const { phone, pin } = req.body;
+    const user = await User.findOne({ phone, isActive: true }).populate("roleId").lean();
     if (!user) {
-      return res.status(404).json({ message: "User not found" });
+      return res.status(401).json({ message: "Invalid credentials" });
     }
-    return res.json({ user });
+    if (!user.pinHash) {
+      return res.status(401).json({ message: "PIN login not available for this account" });
+    }
+    const isValid = await bcrypt.compare(pin, user.pinHash);
+    if (!isValid) {
+      return res.status(401).json({ message: "Invalid credentials" });
+    }
+
+    // Check subscription
+    let subscriptionStatus = null;
+    let trialEndsAt = null;
+    let trialExpired = false;
+    if (user.businessId && user.role !== "superadmin") {
+      const biz = await Business.findById(user.businessId).lean();
+      if (biz) {
+        subscriptionStatus = biz.subscriptionStatus;
+        trialEndsAt = biz.trialEndsAt;
+        if (biz.subscriptionStatus === "trial" && biz.trialEndsAt && new Date() > new Date(biz.trialEndsAt)) {
+          trialExpired = true;
+          await Business.findByIdAndUpdate(biz._id, { subscriptionStatus: "expired" });
+          subscriptionStatus = "expired";
+        }
+        if (biz.subscriptionStatus === "expired") trialExpired = true;
+      }
+    }
+
+    await User.findByIdAndUpdate(user._id, {
+      lastLoginAt: new Date(),
+      lastLoginIp: req.ip,
+      lastLoginDevice: req.headers["user-agent"]?.slice(0, 200)
+    });
+
+    const primaryOutletId = user.outletIds?.[0]?.toString() || undefined;
+    const token = createToken({
+      userId: user._id.toString(),
+      role: user.role,
+      businessId: user.businessId?.toString(),
+      outletId: primaryOutletId,
+      outletIds: user.outletIds?.map((id) => id.toString()) || [],
+      roleId: user.roleId?.toString()
+    });
+
+    await AuditLog.create({
+      businessId: user.businessId,
+      actorId: user._id,
+      actorName: user.name,
+      actorRole: user.role,
+      module: "auth",
+      action: "login",
+      message: "User logged in via phone+PIN",
+      ip: req.ip,
+      userAgent: req.headers["user-agent"]
+    });
+
+    return res.json({
+      token,
+      user: {
+        id: user._id,
+        name: user.name,
+        role: user.role,
+        businessId: user.businessId,
+        outletId: primaryOutletId,
+        outletIds: user.outletIds?.map((id) => id.toString()) || [],
+        subscriptionStatus,
+        trialEndsAt,
+        trialExpired
+      }
+    });
   } catch (error) {
     return next(error);
   }
 }
+
+// ---------- GET ME ----------
+async function getMe(req, res, next) {
+  try {
+    const user = await User.findById(req.user?.userId).select("-pinHash -passwordHash -inviteToken").populate("roleId", "name permissions outletScope outletIds").lean();
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    // Include subscription info
+    let subscriptionStatus = null;
+    let trialEndsAt = null;
+    if (user.businessId) {
+      const biz = await Business.findById(user.businessId).select("subscriptionStatus trialEndsAt currentPeriodEnd planId").lean();
+      if (biz) {
+        subscriptionStatus = biz.subscriptionStatus;
+        trialEndsAt = biz.trialEndsAt;
+      }
+    }
+
+    return res.json({ user: { ...user, subscriptionStatus, trialEndsAt } });
+  } catch (error) {
+    return next(error);
+  }
+}
+
+// ---------- CHECK EMAIL FOR AUTH METHOD ----------
+async function checkEmail(req, res, next) {
+  try {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ message: "Email is required" });
+    
+    const user = await User.findOne({ email: email.toLowerCase(), isActive: true });
+    if (!user) {
+      return res.status(404).json({ message: "No account found with this email" });
+    }
+
+    if (user.passwordHash) {
+      return res.json({ method: "password" });
+    }
+
+    // If no password, generate and send OTP automatically
+    const code = makeCode();
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+    await EmailOtp.create({ email: email.toLowerCase(), code, type: "login", expiresAt });
+    try {
+      await mailer.sendOtpEmail(email, code);
+    } catch (e) {
+      console.warn("Failed to send OTP email", e.message);
+    }
+    
+    return res.json({ method: "otp", message: "OTP sent to your email" });
+  } catch (error) {
+    return next(error);
+  }
+}
+
+// ---------- SEND OTP ----------
+async function sendLoginOtp(req, res, next) {
+  try {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ message: "Email is required" });
+    const code = makeCode();
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+    await EmailOtp.create({ email: email.toLowerCase(), code, type: "login", expiresAt });
+    try {
+      await mailer.sendOtpEmail(email, code);
+    } catch (e) {
+      console.warn("Failed to send OTP email", e.message);
+    }
+    return res.json({ message: "OTP sent to your email" });
+  } catch (error) {
+    return next(error);
+  }
+}
+
+// ---------- VERIFY OTP ----------
+async function verifyLoginOtp(req, res, next) {
+  try {
+    const { email, code } = req.body;
+    if (!email || !code) return res.status(400).json({ message: "Email and code are required" });
+    const otp = await EmailOtp.findOne({ email: email.toLowerCase(), code, used: false });
+    if (!otp) return res.status(400).json({ message: "Invalid code" });
+    if (new Date() > otp.expiresAt) return res.status(410).json({ message: "Code expired" });
+    otp.used = true;
+    await otp.save();
+
+    const user = await User.findOne({ email: email.toLowerCase() }).populate("roleId");
+    if (!user) return res.status(404).json({ message: "No user found for this email" });
+
+    if (!user.emailVerified) {
+      user.emailVerified = true;
+      await user.save();
+    }
+    if (!user.isActive) {
+      return res.json({ message: "Email verified. Account awaiting activation." });
+    }
+
+    // Subscription check
+    let subscriptionStatus = null;
+    let trialEndsAt = null;
+    let trialExpired = false;
+    if (user.businessId && user.role !== "superadmin") {
+      const biz = await Business.findById(user.businessId).lean();
+      if (biz) {
+        subscriptionStatus = biz.subscriptionStatus;
+        trialEndsAt = biz.trialEndsAt;
+        if (biz.subscriptionStatus === "trial" && biz.trialEndsAt && new Date() > new Date(biz.trialEndsAt)) {
+          trialExpired = true;
+          await Business.findByIdAndUpdate(biz._id, { subscriptionStatus: "expired" });
+          subscriptionStatus = "expired";
+        }
+        if (biz.subscriptionStatus === "expired") trialExpired = true;
+      }
+    }
+
+    const primaryOutletId = user.outletIds?.[0]?.toString() || undefined;
+    const token = createToken({
+      userId: user._id.toString(),
+      role: user.role,
+      businessId: user.businessId?.toString(),
+      outletId: primaryOutletId,
+      outletIds: user.outletIds?.map((id) => id.toString()) || [],
+      roleId: user.roleId?.toString()
+    });
+
+    await AuditLog.create({
+      businessId: user.businessId,
+      actorId: user._id,
+      actorName: user.name,
+      actorRole: user.role,
+      module: "auth",
+      action: "otp_login",
+      message: "User logged in via email OTP",
+      ip: req.ip
+    });
+
+    return res.json({
+      token,
+      user: {
+        id: user._id,
+        name: user.name,
+        role: user.role,
+        businessId: user.businessId,
+        outletId: primaryOutletId,
+        outletIds: user.outletIds?.map((id) => id.toString()) || [],
+        subscriptionStatus,
+        trialEndsAt,
+        trialExpired
+      }
+    });
+  } catch (error) {
+    return next(error);
+  }
+}
+
+// ---------- FORGOT PASSWORD ----------
+async function forgotPassword(req, res, next) {
+  try {
+    const { email } = req.body;
+    const user = await User.findOne({ email: email.toLowerCase() });
+    if (!user) {
+      // Don't leak user existence
+      return res.json({ message: "If an account exists, a reset code has been sent" });
+    }
+    const code = makeCode();
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+    await EmailOtp.create({ email: email.toLowerCase(), code, type: "login", expiresAt });
+    try {
+      await mailer.sendPasswordResetOtp(email, code);
+    } catch (e) {
+      console.warn("Failed to send password reset email", e.message);
+    }
+    return res.json({ message: "If an account exists, a reset code has been sent" });
+  } catch (error) {
+    return next(error);
+  }
+}
+
+// ---------- RESET PASSWORD ----------
+async function resetPassword(req, res, next) {
+  try {
+    const { email, code, newPassword } = req.body;
+    const otp = await EmailOtp.findOne({ email: email.toLowerCase(), code, used: false });
+    if (!otp) return res.status(400).json({ message: "Invalid or expired code" });
+    if (new Date() > otp.expiresAt) return res.status(410).json({ message: "Code expired" });
+    otp.used = true;
+    await otp.save();
+
+    const user = await User.findOne({ email: email.toLowerCase() });
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    user.passwordHash = await bcrypt.hash(newPassword, 10);
+    await user.save();
+
+    return res.json({ message: "Password reset successfully. You can now login." });
+  } catch (error) {
+    return next(error);
+  }
+}
+
+// ---------- DEFAULT ROLES ----------
 async function createDefaultRoles(businessId) {
   const defaultRoles = [
     {
@@ -217,80 +585,16 @@ async function createDefaultRoles(businessId) {
     await Role.create({ businessId, ...role });
   }
 }
+
 export {
   getMe,
   login,
+  loginWithEmail,
+  checkEmail,
   register,
-  createDefaultRoles
+  createDefaultRoles,
+  sendLoginOtp,
+  verifyLoginOtp,
+  forgotPassword,
+  resetPassword
 };
-
-async function sendLoginOtp(req, res, next) {
-  try {
-    const { email } = req.body;
-    if (!email) return res.status(400).json({ message: "Email is required" });
-    const code = makeCode();
-    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
-    await EmailOtp.create({ email: email.toLowerCase(), code, type: "login", expiresAt });
-    try {
-      await mailer.sendOtpEmail(email, code);
-    } catch (e) {
-      console.warn("Failed to send OTP email", e.message);
-    }
-    return res.json({ message: "OTP sent" });
-  } catch (error) {
-    return next(error);
-  }
-}
-
-async function verifyLoginOtp(req, res, next) {
-  try {
-    const { email, code } = req.body;
-    if (!email || !code) return res.status(400).json({ message: "Email and code are required" });
-    const otp = await EmailOtp.findOne({ email: email.toLowerCase(), code, used: false });
-    if (!otp) return res.status(400).json({ message: "Invalid code" });
-    if (new Date() > otp.expiresAt) return res.status(410).json({ message: "Code expired" });
-    otp.used = true;
-    await otp.save();
-    // find user by email
-    const user = await User.findOne({ email: email.toLowerCase() }).populate("roleId");
-    if (!user) return res.status(404).json({ message: "No user found for this email" });
-    // mark email verified for user
-    if (!user.emailVerified) {
-      user.emailVerified = true;
-      await user.save();
-    }
-    // if user not active yet, return informative message
-    if (!user.isActive) {
-      return res.json({ message: "Email verified. Account awaiting admin approval." });
-    }
-    // ensure business and outlet active
-    if (user.businessId) {
-      const biz = await Business.findById(user.businessId).lean();
-      if (biz && biz.status !== "active") return res.status(403).json({ message: "Business not active" });
-    }
-    const primaryOutletId = user.outletIds?.[0]?.toString() || void 0;
-    const token = createToken({
-      userId: user._id.toString(),
-      role: user.role,
-      businessId: user.businessId?.toString(),
-      outletId: primaryOutletId,
-      outletIds: user.outletIds?.map((id) => id.toString()) || [],
-      roleId: user.roleId?.toString()
-    });
-    await AuditLog.create({
-      businessId: user.businessId,
-      actorId: user._id,
-      actorName: user.name,
-      actorRole: user.role,
-      module: "auth",
-      action: "otp_login",
-      message: `User logged in via OTP`,
-      ip: req.ip
-    });
-    return res.json({ token, user: { id: user._id, name: user.name, role: user.role, businessId: user.businessId } });
-  } catch (error) {
-    return next(error);
-  }
-}
-
-export { sendLoginOtp, verifyLoginOtp };

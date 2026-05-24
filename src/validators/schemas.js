@@ -3,20 +3,39 @@ import { z } from "zod";
 export const emailSchema = z.string().trim().email("Enter a valid email address");
 export const phoneSchema = z.string().trim().min(8, "Enter a valid phone number").max(16, "Enter a valid phone number");
 export const pinSchema = z.string().trim().min(4, "PIN must be at least 4 digits").max(6, "PIN must be at most 6 digits");
+export const passwordSchema = z.string().min(6, "Password must be at least 6 characters").max(128);
 
 export const registerSchema = z.object({
   name: z.string().trim().min(2, "Name is required"),
-  phone: phoneSchema,
   email: emailSchema,
-  pin: pinSchema,
+  password: passwordSchema,
+  phone: phoneSchema.optional(),
   businessName: z.string().trim().min(2, "Business name is required"),
   outletName: z.string().trim().min(2).optional(),
   outletId: z.string().trim().optional()
 });
 
+// Email + Password login
+export const emailLoginSchema = z.object({
+  email: emailSchema,
+  password: passwordSchema
+});
+
+// Legacy phone + PIN login (backward compat)
 export const loginSchema = z.object({
   phone: phoneSchema,
   pin: pinSchema
+});
+
+// Password reset
+export const forgotPasswordSchema = z.object({
+  email: emailSchema
+});
+
+export const resetPasswordSchema = z.object({
+  email: emailSchema,
+  code: z.string().trim().min(4).max(8),
+  newPassword: passwordSchema
 });
 
 export const otpEmailSchema = z.object({
@@ -225,3 +244,20 @@ export const expenseCreateSchema = z.object({
   note: z.string().trim().optional(),
   date: z.string().datetime().optional()
 }).passthrough();
+
+// Plan schemas (admin)
+export const planCreateSchema = z.object({
+  name: z.string().trim().min(2, "Plan name is required"),
+  description: z.string().trim().optional(),
+  monthlyPrice: z.number().min(0),
+  yearlyPrice: z.number().min(0),
+  maxOutlets: z.number().int().min(1).default(1),
+  maxStaff: z.number().int().min(1).default(5),
+  maxProducts: z.number().int().min(1).default(50),
+  features: z.array(z.string().trim()).optional(),
+  isActive: z.boolean().optional(),
+  isPopular: z.boolean().optional(),
+  sortOrder: z.number().int().optional()
+}).passthrough();
+
+export const planUpdateSchema = planCreateSchema.partial().passthrough();

@@ -5,12 +5,26 @@ const businessSchema = new Schema(
     code: { type: String, required: true, unique: true, lowercase: true },
     slug: { type: String, unique: true, lowercase: true },
     ownerId: { type: Schema.Types.ObjectId, ref: "User", required: true },
+    // Legacy plan field kept for backward compat — prefer planId
     plan: {
       type: String,
       enum: ["free", "starter", "pro", "enterprise"],
       default: "free"
     },
+    planId: { type: Schema.Types.ObjectId, ref: "Plan" },
     planExpiresAt: { type: Date },
+    // Subscription & trial
+    subscriptionStatus: {
+      type: String,
+      enum: ["trial", "active", "expired", "cancelled"],
+      default: "trial"
+    },
+    trialStartedAt: { type: Date },
+    trialEndsAt: { type: Date },
+    currentPeriodStart: { type: Date },
+    currentPeriodEnd: { type: Date },
+    razorpayCustomerId: { type: String },
+    razorpaySubscriptionId: { type: String },
     isActive: { type: Boolean, default: true },
     timezone: { type: String, default: "Asia/Kolkata" },
     currency: { type: String, default: "INR" },
@@ -20,13 +34,14 @@ const businessSchema = new Schema(
     phone: { type: String },
     email: { type: String },
     maxOutlets: { type: Number, default: 1 },
+    maxStaff: { type: Number, default: 5 },
+    maxProducts: { type: Number, default: 50 },
     features: { type: [String], default: [] },
     settings: {
       requireCustomerName: { type: Boolean, default: false },
       enableOnlineOrders: { type: Boolean, default: false },
       defaultTaxRate: { type: Number, default: 0 }
-    }
-    ,
+    },
     status: {
       type: String,
       enum: ["pending", "active", "suspended", "banned"],

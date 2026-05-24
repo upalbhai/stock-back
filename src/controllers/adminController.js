@@ -46,10 +46,10 @@ async function adminToggleBusiness(req, res, next) {
 }
 async function adminUpdatePlan(req, res, next) {
   try {
-    const { plan, planExpiresAt, maxOutlets } = req.body;
+    const { planId, maxOutlets } = req.body;
     const business = await Business.findByIdAndUpdate(
       req.params.id,
-      { $set: { plan, planExpiresAt, maxOutlets } },
+      { $set: { planId, maxOutlets } },
       { new: true }
     );
     if (!business) return res.status(404).json({ message: "Business not found" });

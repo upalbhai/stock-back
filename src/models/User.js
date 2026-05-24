@@ -2,9 +2,11 @@ import mongoose, { Schema } from "mongoose";
 const userSchema = new Schema(
   {
     name: { type: String, required: true, trim: true },
-    phone: { type: String, required: true, unique: true, trim: true },
+    phone: { type: String, sparse: true, trim: true },
     email: { type: String, trim: true, lowercase: true },
     emailVerified: { type: Boolean, default: false },
+    passwordHash: { type: String },
+    pinHash: { type: String },
     businessId: { type: Schema.Types.ObjectId, ref: "Business" },
     outletIds: { type: [Schema.Types.ObjectId], ref: "Outlet", default: [] },
     roleId: { type: Schema.Types.ObjectId, ref: "Role" },
@@ -13,7 +15,6 @@ const userSchema = new Schema(
       enum: ["superadmin", "owner", "manager", "staff"],
       default: "staff"
     },
-    pinHash: { type: String, required: true },
     isActive: { type: Boolean, default: true },
     inviteToken: { type: String },
     inviteTokenExpiry: { type: Date },
@@ -25,6 +26,8 @@ const userSchema = new Schema(
 );
 userSchema.index({ businessId: 1, isActive: 1 });
 userSchema.index({ businessId: 1, role: 1 });
+userSchema.index({ email: 1 }, { unique: true, sparse: true });
+userSchema.index({ phone: 1 }, { unique: true, sparse: true });
 const User = mongoose.models.User || mongoose.model("User", userSchema);
 export {
   User
