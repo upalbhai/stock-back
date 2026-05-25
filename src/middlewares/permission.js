@@ -3,6 +3,7 @@ function requirePermission(module, action) {
   return async (req, res, next) => {
     try {
       const userId = req.user?.userId;
+      console.log('user', req.user)
       if (!userId) {
         return res.status(401).json({ message: "Unauthorized" });
       }

@@ -86,8 +86,8 @@ async function register(req, res, next) {
       finalOutletId = outlet._id.toString();
     }
 
-    const passwordHash = await bcrypt.hash(password, 10);
-    const pinHash = phone ? await bcrypt.hash(password.slice(0, 6), 10) : undefined;
+    const passwordHash = password ? await bcrypt.hash(password, 10) : undefined;
+    const pinHash = phone && password ? await bcrypt.hash(password.slice(0, 6), 10) : undefined;
 
     const user = await User.create({
       _id: userId,
@@ -140,27 +140,9 @@ async function register(req, res, next) {
       console.warn("Failed to send verification OTP", e.message);
     }
 
-    const primaryOutletId = user.outletIds?.[0]?.toString() || undefined;
-    const token = createToken({
-      userId: user._id.toString(),
-      role: user.role,
-      businessId: user.businessId?.toString(),
-      outletId: primaryOutletId,
-      outletIds: user.outletIds?.map((id) => id.toString()) || []
-    });
-
+    // We no longer return the token instantly here so they are forced to verify their email
     return res.status(201).json({
-      token,
-      user: {
-        id: user._id,
-        name: user.name,
-        role: user.role,
-        businessId: business?._id,
-        outletId: primaryOutletId,
-        outletIds: [finalOutletId],
-        subscriptionStatus: business?.subscriptionStatus || "trial",
-        trialEndsAt: business?.trialEndsAt
-      }
+      message: "Registration successful. Please check your email for the verification code."
     });
   } catch (error) {
     return next(error);
@@ -374,6 +356,18 @@ async function checkEmail(req, res, next) {
     const user = await User.findOne({ email: email.toLowerCase(), isActive: true });
     if (!user) {
       return res.status(404).json({ message: "No account found with this email" });
+    }
+
+    if (!user.emailVerified) {
+      const code = makeCode();
+      const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+      await EmailOtp.create({ email: email.toLowerCase(), code, type: "login", expiresAt });
+      try {
+        await mailer.sendOtpEmail(email, code);
+      } catch (e) {
+        console.warn("Failed to send OTP email", e.message);
+      }
+      return res.json({ method: "otp", message: "Email not verified. OTP sent to your email." });
     }
 
     if (user.passwordHash) {

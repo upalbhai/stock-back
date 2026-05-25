@@ -1,6 +1,7 @@
 import jwt from "jsonwebtoken";
 import { env } from "../config/env.js";
 function requireAuth(req, res, next) {
+  if (req.user) return next();
   const authHeader = req.headers.authorization;
   if (!authHeader) {
     return res.status(401).json({ message: "Missing authorization" });
