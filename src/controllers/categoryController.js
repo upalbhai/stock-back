@@ -1,3 +1,5 @@
+import { successResponse } from "../utils/successResponse.js";
+import { errorResponse } from "../utils/errorResponse.js";
 import { Category } from "../models/Category.js";
 import { AuditLog } from "../models/AuditLog.js";
 function makeSlug(name, businessId) {
@@ -12,7 +14,13 @@ async function listCategories(req, res, next) {
     if (outletId) query.$or = [{ outletId }, { outletId: null }];
     const categories = await Category.find(query).sort({ parentId: 1, sortOrder: 1, name: 1 }).lean();
     if (flat === "true") {
-      return res.json({ categories });
+      return successResponse({
+        res: res,
+
+        data: {
+          categories
+        }
+      });
     }
     const topLevel = categories.filter((c) => !c.parentId);
     const buildTree = (parent) => ({
@@ -21,7 +29,13 @@ async function listCategories(req, res, next) {
         (c) => c.parentId?.toString() === parent._id.toString()
       )
     });
-    return res.json({ categories: topLevel.map(buildTree) });
+    return successResponse({
+      res: res,
+
+      data: {
+        categories: topLevel.map(buildTree)
+      }
+    });
   } catch (error) {
     return next(error);
   }
@@ -54,7 +68,14 @@ async function createCategory(req, res, next) {
       message: `Category created: ${category.name}`,
       ip: req.ip
     });
-    return res.status(201).json({ category });
+    return successResponse({
+      res: res,
+      statusCode: 201,
+
+      data: {
+        category
+      }
+    });
   } catch (error) {
     return next(error);
   }
@@ -75,8 +96,18 @@ async function updateCategory(req, res, next) {
       { $set: update },
       { new: true }
     );
-    if (!category) return res.status(404).json({ message: "Category not found" });
-    return res.json({ category });
+    if (!category) return errorResponse({
+      res: res,
+      statusCode: 404,
+      message: "Category not found"
+    });
+    return successResponse({
+      res: res,
+
+      data: {
+        category
+      }
+    });
   } catch (error) {
     return next(error);
   }
@@ -88,7 +119,10 @@ async function deleteCategory(req, res, next) {
       { _id: req.params.id, businessId },
       { $set: { isActive: false } }
     );
-    return res.json({ message: "Category deactivated" });
+    return successResponse({
+      res: res,
+      message: "Category deactivated"
+    });
   } catch (error) {
     return next(error);
   }

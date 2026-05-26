@@ -1,3 +1,5 @@
+import { successResponse } from "../utils/successResponse.js";
+import { errorResponse } from "../utils/errorResponse.js";
 import { Expense } from "../models/Expense.js";
 async function listExpenses(req, res, next) {
   try {
@@ -17,7 +19,15 @@ async function listExpenses(req, res, next) {
       Expense.countDocuments(query)
     ]);
     const totalAmount = expenses.reduce((s, e) => s + e.amount, 0);
-    return res.json({ expenses, total, totalAmount });
+    return successResponse({
+      res: res,
+
+      data: {
+        expenses,
+        total,
+        totalAmount
+      }
+    });
   } catch (error) {
     return next(error);
   }
@@ -35,7 +45,14 @@ async function createExpense(req, res, next) {
       date: date ? new Date(date) : /* @__PURE__ */ new Date(),
       createdBy: userId
     });
-    return res.status(201).json({ expense });
+    return successResponse({
+      res: res,
+      statusCode: 201,
+
+      data: {
+        expense
+      }
+    });
   } catch (error) {
     return next(error);
   }
@@ -44,7 +61,10 @@ async function deleteExpense(req, res, next) {
   try {
     const { businessId } = req.user;
     await Expense.findOneAndDelete({ _id: req.params.id, businessId });
-    return res.json({ message: "Expense deleted" });
+    return successResponse({
+      res: res,
+      message: "Expense deleted"
+    });
   } catch (error) {
     return next(error);
   }

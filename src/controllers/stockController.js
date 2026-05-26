@@ -1,3 +1,5 @@
+import { successResponse } from "../utils/successResponse.js";
+import { errorResponse } from "../utils/errorResponse.js";
 import { Product } from "../models/Product.js";
 import { StockEntry } from "../models/StockEntry.js";
 import { StockTransfer } from "../models/StockTransfer.js";
@@ -12,7 +14,10 @@ async function getStockSummary(req, res, next) {
     const totalSkus = products.length;
     const onHandTotal = products.reduce((sum, p) => sum + p.onHandQty, 0);
     const lowStock = products.filter((p) => p.onHandQty <= p.lowStockThreshold).length;
-    return res.json({ data: { totalSkus, onHandTotal, lowStock } });
+    return successResponse({
+      res: res,
+      data: { totalSkus, onHandTotal, lowStock }
+    });
   } catch (error) {
     return next(error);
   }
@@ -25,7 +30,10 @@ async function getStockAlerts(req, res, next) {
     if (outletId) query.outletId = outletId;
     const products = await Product.find(query).select("name onHandQty lowStockThreshold unit categoryId").populate("categoryId", "name icon").lean();
     const alerts = products.filter((p) => p.onHandQty <= p.lowStockThreshold);
-    return res.json({ data: alerts });
+    return successResponse({
+      res: res,
+      data: alerts
+    });
   } catch (error) {
     return next(error);
   }
@@ -42,7 +50,14 @@ async function getStockHistory(req, res, next) {
       StockEntry.find(query).sort({ createdAt: -1 }).skip(skip).limit(Number(limit)).populate("productId", "name unit").populate("createdBy", "name").lean(),
       StockEntry.countDocuments(query)
     ]);
-    return res.json({ entries, total });
+    return successResponse({
+      res: res,
+
+      data: {
+        entries,
+        total
+      }
+    });
   } catch (error) {
     return next(error);
   }
@@ -52,7 +67,11 @@ async function adjustStock(req, res, next) {
     const { businessId, userId } = req.user;
     const { productId, outletId, qty, type, note } = req.body;
     const product = await Product.findOne({ _id: productId, businessId });
-    if (!product) return res.status(404).json({ message: "Product not found" });
+    if (!product) return errorResponse({
+      res: res,
+      statusCode: 404,
+      message: "Product not found"
+    });
     const qtyBefore = product.onHandQty;
     const qtyAfter = type === "adjustment" ? qty : qtyBefore + qty;
     await Product.findByIdAndUpdate(productId, { onHandQty: qtyAfter });
@@ -79,7 +98,13 @@ async function adjustStock(req, res, next) {
       message: `Stock adjusted: ${product.name} ${qtyBefore}\u2192${qtyAfter}`,
       ip: req.ip
     });
-    return res.json({ product: await Product.findById(productId).lean() });
+    return successResponse({
+      res: res,
+
+      data: {
+        product: await Product.findById(productId).lean()
+      }
+    });
   } catch (error) {
     return next(error);
   }
@@ -97,7 +122,14 @@ async function createTransfer(req, res, next) {
       requestedBy: userId,
       status: "pending"
     });
-    return res.status(201).json({ transfer });
+    return successResponse({
+      res: res,
+      statusCode: 201,
+
+      data: {
+        transfer
+      }
+    });
   } catch (error) {
     return next(error);
   }
@@ -106,8 +138,16 @@ async function approveTransfer(req, res, next) {
   try {
     const { businessId, userId } = req.user;
     const transfer = await StockTransfer.findOne({ _id: req.params.id, businessId });
-    if (!transfer) return res.status(404).json({ message: "Transfer not found" });
-    if (transfer.status !== "pending") return res.status(400).json({ message: "Already processed" });
+    if (!transfer) return errorResponse({
+      res: res,
+      statusCode: 404,
+      message: "Transfer not found"
+    });
+    if (transfer.status !== "pending") return errorResponse({
+      res: res,
+      statusCode: 400,
+      message: "Already processed"
+    });
     for (const item of transfer.items) {
       const src = await Product.findOne({ _id: item.productId, outletId: transfer.fromOutletId });
       if (src) {
@@ -152,7 +192,10 @@ async function approveTransfer(req, res, next) {
       approvedAt: /* @__PURE__ */ new Date(),
       completedAt: /* @__PURE__ */ new Date()
     });
-    return res.json({ message: "Transfer completed" });
+    return successResponse({
+      res: res,
+      message: "Transfer completed"
+    });
   } catch (error) {
     return next(error);
   }
@@ -161,7 +204,13 @@ async function listTransfers(req, res, next) {
   try {
     const { businessId } = req.user;
     const transfers = await StockTransfer.find({ businessId }).populate("fromOutletId", "name").populate("toOutletId", "name").populate("requestedBy", "name").sort({ createdAt: -1 }).lean();
-    return res.json({ transfers });
+    return successResponse({
+      res: res,
+
+      data: {
+        transfers
+      }
+    });
   } catch (error) {
     return next(error);
   }

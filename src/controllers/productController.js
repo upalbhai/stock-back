@@ -1,10 +1,13 @@
+import { successResponse } from "../utils/successResponse.js";
+import { errorResponse } from "../utils/errorResponse.js";
 import { Product } from "../models/Product.js";
 import { StockEntry } from "../models/StockEntry.js";
 import { AuditLog } from "../models/AuditLog.js";
 async function listProducts(req, res, next) {
   try {
     const { businessId } = req.user;
-    const { outletId, categoryId, search, includeInactive } = req.query;
+    const { outletId, categoryId, search, includeInactive, page = 1, limit = 50, cursor } = req.query;
+    
     const query = { businessId };
     if (outletId) query.outletId = outletId;
     if (categoryId) query.categoryId = categoryId;
@@ -15,8 +18,44 @@ async function listProducts(req, res, next) {
         { sku: { $regex: search, $options: "i" } }
       ];
     }
-    const products = await Product.find(query).populate("categoryId", "name icon color parentId").sort({ sortOrder: 1, name: 1 }).lean();
-    return res.json({ products });
+    
+    const numLimit = Number(limit);
+    if (cursor) {
+      query._id = { $gt: cursor }; // For ascending sort
+    }
+
+    const sortOption = { _id: 1 }; // Consistent sorting for cursor
+
+    const products = await Product.find(query)
+      .populate("categoryId", "name icon color parentId")
+      .sort(sortOption)
+      .skip(cursor ? 0 : (Number(page) - 1) * numLimit)
+      .limit(numLimit)
+      .lean();
+
+    let meta = null;
+    if (cursor !== undefined) {
+      const hasNextPage = products.length === numLimit;
+      const nextCursor = hasNextPage ? products[products.length - 1]._id : null;
+      meta = { cursor: { nextCursor, hasNextPage } };
+    } else {
+      const total = await Product.countDocuments(query);
+      meta = {
+        pagination: {
+          page: Number(page),
+          limit: numLimit,
+          total,
+          totalPages: Math.ceil(total / numLimit)
+        }
+      };
+    }
+
+    return successResponse({
+      res: res,
+      message: "Products fetched successfully",
+      data: products,
+      meta
+    });
   } catch (error) {
     return next(error);
   }
@@ -25,8 +64,18 @@ async function getProduct(req, res, next) {
   try {
     const { businessId } = req.user;
     const product = await Product.findOne({ _id: req.params.id, businessId }).populate("categoryId", "name icon color parentId").lean();
-    if (!product) return res.status(404).json({ message: "Product not found" });
-    return res.json({ product });
+    if (!product) return errorResponse({
+      res: res,
+      statusCode: 404,
+      message: "Product not found"
+    });
+    return successResponse({
+      res: res,
+
+      data: {
+        product
+      }
+    });
   } catch (error) {
     return next(error);
   }
@@ -97,7 +146,14 @@ async function createProduct(req, res, next) {
       message: `Product created: ${product.name}`,
       ip: req.ip
     });
-    return res.status(201).json({ product });
+    return successResponse({
+      res: res,
+      statusCode: 201,
+
+      data: {
+        product
+      }
+    });
   } catch (error) {
     return next(error);
   }
@@ -132,8 +188,18 @@ async function updateProduct(req, res, next) {
       { $set: update },
       { new: true }
     );
-    if (!product) return res.status(404).json({ message: "Product not found" });
-    return res.json({ product });
+    if (!product) return errorResponse({
+      res: res,
+      statusCode: 404,
+      message: "Product not found"
+    });
+    return successResponse({
+      res: res,
+
+      data: {
+        product
+      }
+    });
   } catch (error) {
     return next(error);
   }
@@ -142,7 +208,10 @@ async function deleteProduct(req, res, next) {
   try {
     const { businessId } = req.user;
     await Product.findOneAndUpdate({ _id: req.params.id, businessId }, { $set: { isActive: false } });
-    return res.json({ message: "Product deactivated" });
+    return successResponse({
+      res: res,
+      message: "Product deactivated"
+    });
   } catch (error) {
     return next(error);
   }

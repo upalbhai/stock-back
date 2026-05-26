@@ -1,3 +1,5 @@
+import { successResponse } from "../utils/successResponse.js";
+import { errorResponse } from "../utils/errorResponse.js";
 import { Order } from "../models/Order.js";
 import { Payment } from "../models/Payment.js";
 import { Product } from "../models/Product.js";
@@ -89,7 +91,14 @@ async function createOrder(req, res, next) {
       ip: req.ip
     });
     const populated = await Order.findById(order._id).populate("payments").populate("createdBy", "name").lean();
-    return res.status(201).json({ order: populated });
+    return successResponse({
+      res: res,
+      statusCode: 201,
+
+      data: {
+        order: populated
+      }
+    });
   } catch (error) {
     return next(error);
   }
@@ -111,7 +120,16 @@ async function listOrders(req, res, next) {
       Order.find(query).sort({ createdAt: -1 }).skip(skip).limit(Number(limit)).populate("createdBy", "name").lean(),
       Order.countDocuments(query)
     ]);
-    return res.json({ orders, total, page: Number(page), pages: Math.ceil(total / Number(limit)) });
+    return successResponse({
+      res: res,
+
+      data: {
+        orders,
+        total,
+        page: Number(page),
+        pages: Math.ceil(total / Number(limit))
+      }
+    });
   } catch (error) {
     return next(error);
   }
@@ -120,8 +138,18 @@ async function getOrder(req, res, next) {
   try {
     const { businessId } = req.user;
     const order = await Order.findOne({ _id: req.params.id, businessId }).populate("payments").populate("createdBy", "name").lean();
-    if (!order) return res.status(404).json({ message: "Order not found" });
-    return res.json({ order });
+    if (!order) return errorResponse({
+      res: res,
+      statusCode: 404,
+      message: "Order not found"
+    });
+    return successResponse({
+      res: res,
+
+      data: {
+        order
+      }
+    });
   } catch (error) {
     return next(error);
   }
@@ -131,8 +159,16 @@ async function refundOrder(req, res, next) {
     const { businessId, userId } = req.user;
     const { reason } = req.body;
     const order = await Order.findOne({ _id: req.params.id, businessId });
-    if (!order) return res.status(404).json({ message: "Order not found" });
-    if (order.status === "refunded") return res.status(400).json({ message: "Already refunded" });
+    if (!order) return errorResponse({
+      res: res,
+      statusCode: 404,
+      message: "Order not found"
+    });
+    if (order.status === "refunded") return errorResponse({
+      res: res,
+      statusCode: 400,
+      message: "Already refunded"
+    });
     await Order.findByIdAndUpdate(order._id, {
       status: "refunded",
       paymentStatus: "pending",
@@ -175,7 +211,10 @@ async function refundOrder(req, res, next) {
       message: `Order ${order.orderNumber} refunded. Reason: ${reason}`,
       ip: req.ip
     });
-    return res.json({ message: "Order refunded and stock restored" });
+    return successResponse({
+      res: res,
+      message: "Order refunded and stock restored"
+    });
   } catch (error) {
     return next(error);
   }

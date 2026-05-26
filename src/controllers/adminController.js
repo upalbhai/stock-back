@@ -1,3 +1,5 @@
+import { successResponse } from "../utils/successResponse.js";
+import { errorResponse } from "../utils/errorResponse.js";
 import { Business } from "../models/Business.js";
 import { User } from "../models/User.js";
 import { AuditLog } from "../models/AuditLog.js";
@@ -16,7 +18,14 @@ async function adminListBusinesses(req, res, next) {
       Business.find(query).populate("ownerId", "name phone email").sort({ createdAt: -1 }).skip(skip).limit(Number(limit)).lean(),
       Business.countDocuments(query)
     ]);
-    return res.json({ businesses, total });
+    return successResponse({
+      res: res,
+
+      data: {
+        businesses,
+        total
+      }
+    });
   } catch (error) {
     return next(error);
   }
@@ -28,7 +37,11 @@ async function adminToggleBusiness(req, res, next) {
       { $set: { isActive: req.body.isActive } },
       { new: true }
     );
-    if (!business) return res.status(404).json({ message: "Business not found" });
+    if (!business) return errorResponse({
+      res: res,
+      statusCode: 404,
+      message: "Business not found"
+    });
     await AuditLog.create({
       actorId: req.user?.userId,
       module: "admin",
@@ -39,7 +52,13 @@ async function adminToggleBusiness(req, res, next) {
       message: `Business ${req.body.isActive ? "enabled" : "disabled"}: ${business.name}`,
       ip: req.ip
     });
-    return res.json({ business });
+    return successResponse({
+      res: res,
+
+      data: {
+        business
+      }
+    });
   } catch (error) {
     return next(error);
   }
@@ -52,8 +71,18 @@ async function adminUpdatePlan(req, res, next) {
       { $set: { planId, maxOutlets } },
       { new: true }
     );
-    if (!business) return res.status(404).json({ message: "Business not found" });
-    return res.json({ business });
+    if (!business) return errorResponse({
+      res: res,
+      statusCode: 404,
+      message: "Business not found"
+    });
+    return successResponse({
+      res: res,
+
+      data: {
+        business
+      }
+    });
   } catch (error) {
     return next(error);
   }
@@ -62,7 +91,11 @@ async function adminImpersonate(req, res, next) {
   try {
     const { targetUserId } = req.body;
     const targetUser = await User.findById(targetUserId).lean();
-    if (!targetUser) return res.status(404).json({ message: "User not found" });
+    if (!targetUser) return errorResponse({
+      res: res,
+      statusCode: 404,
+      message: "User not found"
+    });
     const token = jwt.sign({
       userId: targetUser._id.toString(),
       role: targetUser.role,
@@ -83,11 +116,15 @@ async function adminImpersonate(req, res, next) {
       message: `Super admin impersonating: ${targetUser.name}`,
       ip: req.ip
     });
-    return res.json({
-      token,
-      user: { id: targetUser._id, name: targetUser.name, role: targetUser.role, businessId: targetUser.businessId },
-      impersonating: true,
-      originalAdminId: req.user?.userId
+    return successResponse({
+      res: res,
+
+      data: {
+        token,
+        user: { id: targetUser._id, name: targetUser.name, role: targetUser.role, businessId: targetUser.businessId },
+        impersonating: true,
+        originalAdminId: req.user?.userId
+      }
     });
   } catch (error) {
     return next(error);
@@ -103,7 +140,10 @@ async function adminStopImpersonation(req, res, next) {
       message: "Impersonation session ended",
       ip: req.ip
     });
-    return res.json({ message: "Impersonation ended" });
+    return successResponse({
+      res: res,
+      message: "Impersonation ended"
+    });
   } catch (error) {
     return next(error);
   }
@@ -115,7 +155,15 @@ async function adminPlatformStats(req, res, next) {
       Business.countDocuments({ isActive: true }),
       User.countDocuments({ isActive: true })
     ]);
-    return res.json({ totalBusinesses, activeBusinesses, totalUsers });
+    return successResponse({
+      res: res,
+
+      data: {
+        totalBusinesses,
+        activeBusinesses,
+        totalUsers
+      }
+    });
   } catch (error) {
     return next(error);
   }
@@ -123,8 +171,16 @@ async function adminPlatformStats(req, res, next) {
 async function adminApproveBusiness(req, res, next) {
   try {
     const business = await Business.findById(req.params.id);
-    if (!business) return res.status(404).json({ message: "Business not found" });
-    if (business.status === "active") return res.status(400).json({ message: "Business already active" });
+    if (!business) return errorResponse({
+      res: res,
+      statusCode: 404,
+      message: "Business not found"
+    });
+    if (business.status === "active") return errorResponse({
+      res: res,
+      statusCode: 400,
+      message: "Business already active"
+    });
     business.status = "active";
     business.isActive = true;
     business.approvedAt = new Date();
@@ -153,7 +209,13 @@ async function adminApproveBusiness(req, res, next) {
     } catch (e) {
       console.warn("Failed to send approval email", e.message);
     }
-    return res.json({ business });
+    return successResponse({
+      res: res,
+
+      data: {
+        business
+      }
+    });
   } catch (error) {
     return next(error);
   }
@@ -163,9 +225,17 @@ async function adminSetBusinessStatus(req, res, next) {
   try {
     const { status } = req.body;
     const allowed = ["pending", "active", "suspended", "banned"];
-    if (!allowed.includes(status)) return res.status(400).json({ message: "Invalid status" });
+    if (!allowed.includes(status)) return errorResponse({
+      res: res,
+      statusCode: 400,
+      message: "Invalid status"
+    });
     const business = await Business.findByIdAndUpdate(req.params.id, { $set: { status, isActive: status === "active" } }, { new: true });
-    if (!business) return res.status(404).json({ message: "Business not found" });
+    if (!business) return errorResponse({
+      res: res,
+      statusCode: 404,
+      message: "Business not found"
+    });
     await AuditLog.create({
       actorId: req.user?.userId,
       module: "admin",
@@ -176,7 +246,13 @@ async function adminSetBusinessStatus(req, res, next) {
       message: `Business status set to ${status}: ${business.name}`,
       ip: req.ip
     });
-    return res.json({ business });
+    return successResponse({
+      res: res,
+
+      data: {
+        business
+      }
+    });
   } catch (error) {
     return next(error);
   }
@@ -184,8 +260,16 @@ async function adminSetBusinessStatus(req, res, next) {
 async function adminApproveOutlet(req, res, next) {
   try {
     const outlet = await (await import("../models/Outlet.js")).Outlet.findById(req.params.id);
-    if (!outlet) return res.status(404).json({ message: "Outlet not found" });
-    if (outlet.status === "active") return res.status(400).json({ message: "Outlet already active" });
+    if (!outlet) return errorResponse({
+      res: res,
+      statusCode: 404,
+      message: "Outlet not found"
+    });
+    if (outlet.status === "active") return errorResponse({
+      res: res,
+      statusCode: 400,
+      message: "Outlet already active"
+    });
     outlet.status = "active";
     outlet.isActive = true;
     outlet.approvedAt = new Date();
@@ -209,7 +293,13 @@ async function adminApproveOutlet(req, res, next) {
     } catch (e) {
       console.warn("Failed to send outlet approval email", e.message);
     }
-    return res.json({ outlet });
+    return successResponse({
+      res: res,
+
+      data: {
+        outlet
+      }
+    });
   } catch (error) {
     return next(error);
   }
@@ -219,10 +309,18 @@ async function adminSetOutletStatus(req, res, next) {
   try {
     const { status } = req.body;
     const allowed = ["pending", "active", "suspended", "banned"];
-    if (!allowed.includes(status)) return res.status(400).json({ message: "Invalid status" });
+    if (!allowed.includes(status)) return errorResponse({
+      res: res,
+      statusCode: 400,
+      message: "Invalid status"
+    });
     const OutletModel = (await import("../models/Outlet.js")).Outlet;
     const outlet = await OutletModel.findByIdAndUpdate(req.params.id, { $set: { status, isActive: status === "active" } }, { new: true });
-    if (!outlet) return res.status(404).json({ message: "Outlet not found" });
+    if (!outlet) return errorResponse({
+      res: res,
+      statusCode: 404,
+      message: "Outlet not found"
+    });
     await AuditLog.create({
       actorId: req.user?.userId,
       module: "admin",
@@ -233,7 +331,13 @@ async function adminSetOutletStatus(req, res, next) {
       message: `Outlet status set to ${status}: ${outlet.name}`,
       ip: req.ip
     });
-    return res.json({ outlet });
+    return successResponse({
+      res: res,
+
+      data: {
+        outlet
+      }
+    });
   } catch (error) {
     return next(error);
   }

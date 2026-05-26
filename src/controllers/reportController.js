@@ -1,3 +1,5 @@
+import { successResponse } from "../utils/successResponse.js";
+import { errorResponse } from "../utils/errorResponse.js";
 import { Order } from "../models/Order.js";
 import { Outlet } from "../models/Outlet.js";
 function todayRange() {
@@ -44,7 +46,10 @@ async function getDailyReport(req, res, next) {
       }
     }
     const bestSelling = Object.values(productSales).sort((a, b) => b.qty - a.qty).slice(0, 10);
-    return res.json({ data: { totalSales, totalOrders, paymentSummary, bestSelling } });
+    return successResponse({
+      res: res,
+      data: { totalSales, totalOrders, paymentSummary, bestSelling }
+    });
   } catch (error) {
     return next(error);
   }
@@ -65,7 +70,13 @@ async function getOutletComparison(req, res, next) {
       const revenue = orders.reduce((s, o) => s + o.total, 0);
       return { outlet: { id: outlet._id, name: outlet.name }, revenue, orders: orders.length };
     }));
-    return res.json({ comparison: result });
+    return successResponse({
+      res: res,
+
+      data: {
+        comparison: result
+      }
+    });
   } catch (error) {
     return next(error);
   }
@@ -89,7 +100,13 @@ async function getRevenueTrend(req, res, next) {
       const revenue = orders.reduce((s, o) => s + o.total, 0);
       trend.push({ date: start.toISOString().split("T")[0], revenue, orders: orders.length });
     }
-    return res.json({ trend });
+    return successResponse({
+      res: res,
+
+      data: {
+        trend
+      }
+    });
   } catch (error) {
     return next(error);
   }

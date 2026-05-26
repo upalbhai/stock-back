@@ -38,6 +38,11 @@ export const resetPasswordSchema = z.object({
   newPassword: passwordSchema
 });
 
+export const setupPasswordSchema = z.object({
+  newPassword: passwordSchema,
+  oldPassword: passwordSchema.optional()
+});
+
 export const otpEmailSchema = z.object({
   email: emailSchema
 });

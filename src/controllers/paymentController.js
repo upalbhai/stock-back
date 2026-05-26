@@ -1,3 +1,5 @@
+import { successResponse } from "../utils/successResponse.js";
+import { errorResponse } from "../utils/errorResponse.js";
 import Razorpay from "Razorpay";
 import crypto from "crypto";
 import { env } from "../config/env.js";
@@ -23,16 +25,28 @@ async function createOrder(req, res, next) {
     const { planId, billingCycle = "monthly" } = req.body;
     const businessId = req.user?.businessId;
     
-    if (!businessId) return res.status(403).json({ message: "Business not found" });
+    if (!businessId) return errorResponse({
+      res: res,
+      statusCode: 403,
+      message: "Business not found"
+    });
     
     const plan = await Plan.findById(planId);
     if (!plan || !plan.isActive) {
-      return res.status(404).json({ message: "Plan not found or inactive" });
+      return errorResponse({
+        res: res,
+        statusCode: 404,
+        message: "Plan not found or inactive"
+      });
     }
     
     const amount = billingCycle === "yearly" ? plan.yearlyPrice : plan.monthlyPrice;
     if (amount <= 0) {
-      return res.status(400).json({ message: "Cannot create an order for a free plan" });
+      return errorResponse({
+        res: res,
+        statusCode: 400,
+        message: "Cannot create an order for a free plan"
+      });
     }
 
     const rzp = getRazorpayInstance();
@@ -45,11 +59,15 @@ async function createOrder(req, res, next) {
     
     const order = await rzp.orders.create(options);
     
-    return res.json({
-      orderId: order.id,
-      amount: order.amount,
-      currency: order.currency,
-      keyId: process.env.RAZORPAY_KEY_ID
+    return successResponse({
+      res: res,
+
+      data: {
+        orderId: order.id,
+        amount: order.amount,
+        currency: order.currency,
+        keyId: process.env.RAZORPAY_KEY_ID
+      }
     });
   } catch (error) {
     return next(error);
@@ -62,7 +80,11 @@ async function verifyPayment(req, res, next) {
     const { razorpay_order_id, razorpay_payment_id, razorpay_signature, planId, billingCycle = "monthly" } = req.body;
     const businessId = req.user?.businessId;
     
-    if (!businessId) return res.status(403).json({ message: "Business not found" });
+    if (!businessId) return errorResponse({
+      res: res,
+      statusCode: 403,
+      message: "Business not found"
+    });
 
     const secret = process.env.RAZORPAY_KEY_SECRET;
     const generated_signature = crypto
@@ -71,11 +93,19 @@ async function verifyPayment(req, res, next) {
       .digest("hex");
 
     if (generated_signature !== razorpay_signature) {
-      return res.status(400).json({ message: "Payment verification failed" });
+      return errorResponse({
+        res: res,
+        statusCode: 400,
+        message: "Payment verification failed"
+      });
     }
 
     const plan = await Plan.findById(planId);
-    if (!plan) return res.status(404).json({ message: "Plan not found" });
+    if (!plan) return errorResponse({
+      res: res,
+      statusCode: 404,
+      message: "Plan not found"
+    });
     
     const amount = billingCycle === "yearly" ? plan.yearlyPrice : plan.monthlyPrice;
     
@@ -130,7 +160,14 @@ async function verifyPayment(req, res, next) {
       }
     }
     
-    return res.json({ success: true, subscriptionStatus: "active", currentPeriodEnd: endDate });
+    return successResponse({
+      res: res,
+
+      data: {
+        subscriptionStatus: "active",
+        currentPeriodEnd: endDate
+      }
+    });
   } catch (error) {
     return next(error);
   }
@@ -164,19 +201,31 @@ async function webhookHandler(req, res, next) {
 async function getSubscriptionStatus(req, res, next) {
   try {
     const businessId = req.user?.businessId;
-    if (!businessId) return res.status(403).json({ message: "Business not found" });
+    if (!businessId) return errorResponse({
+      res: res,
+      statusCode: 403,
+      message: "Business not found"
+    });
     
     const business = await Business.findById(businessId).select("subscriptionStatus trialEndsAt currentPeriodEnd planId maxOutlets maxStaff maxProducts").populate("planId").lean();
-    if (!business) return res.status(404).json({ message: "Business not found" });
+    if (!business) return errorResponse({
+      res: res,
+      statusCode: 404,
+      message: "Business not found"
+    });
     
-    return res.json({
-      subscriptionStatus: business.subscriptionStatus,
-      trialEndsAt: business.trialEndsAt,
-      currentPeriodEnd: business.currentPeriodEnd,
-      plan: business.planId,
-      maxOutlets: business.maxOutlets,
-      maxStaff: business.maxStaff,
-      maxProducts: business.maxProducts
+    return successResponse({
+      res: res,
+
+      data: {
+        subscriptionStatus: business.subscriptionStatus,
+        trialEndsAt: business.trialEndsAt,
+        currentPeriodEnd: business.currentPeriodEnd,
+        plan: business.planId,
+        maxOutlets: business.maxOutlets,
+        maxStaff: business.maxStaff,
+        maxProducts: business.maxProducts
+      }
     });
   } catch (error) {
     return next(error);

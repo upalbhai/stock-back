@@ -1,3 +1,5 @@
+import { successResponse } from "../utils/successResponse.js";
+import { errorResponse } from "../utils/errorResponse.js";
 import { Plan } from "../models/Plan.js";
 import { AuditLog } from "../models/AuditLog.js";
 
@@ -8,7 +10,13 @@ function makeSlug(str) {
 async function listPlans(req, res, next) {
   try {
     const plans = await Plan.find({ isActive: true }).sort({ sortOrder: 1 }).lean();
-    return res.json({ plans });
+    return successResponse({
+      res: res,
+
+      data: {
+        plans
+      }
+    });
   } catch (error) {
     return next(error);
   }
@@ -17,7 +25,13 @@ async function listPlans(req, res, next) {
 async function listAllPlans(req, res, next) {
   try {
     const plans = await Plan.find().sort({ sortOrder: 1 }).lean();
-    return res.json({ plans });
+    return successResponse({
+      res: res,
+
+      data: {
+        plans
+      }
+    });
   } catch (error) {
     return next(error);
   }
@@ -30,7 +44,11 @@ async function createPlan(req, res, next) {
     
     const existing = await Plan.findOne({ slug });
     if (existing) {
-      return res.status(400).json({ message: "Plan with this name already exists" });
+      return errorResponse({
+        res: res,
+        statusCode: 400,
+        message: "Plan with this name already exists"
+      });
     }
     
     const plan = await Plan.create({ name, slug, ...rest });
@@ -43,7 +61,14 @@ async function createPlan(req, res, next) {
       ip: req.ip
     });
     
-    return res.status(201).json({ plan });
+    return successResponse({
+      res: res,
+      statusCode: 201,
+
+      data: {
+        plan
+      }
+    });
   } catch (error) {
     return next(error);
   }
@@ -52,7 +77,11 @@ async function createPlan(req, res, next) {
 async function updatePlan(req, res, next) {
   try {
     const plan = await Plan.findByIdAndUpdate(req.params.id, { $set: req.body }, { new: true });
-    if (!plan) return res.status(404).json({ message: "Plan not found" });
+    if (!plan) return errorResponse({
+      res: res,
+      statusCode: 404,
+      message: "Plan not found"
+    });
     
     await AuditLog.create({
       actorId: req.user?.userId,
@@ -62,7 +91,13 @@ async function updatePlan(req, res, next) {
       ip: req.ip
     });
     
-    return res.json({ plan });
+    return successResponse({
+      res: res,
+
+      data: {
+        plan
+      }
+    });
   } catch (error) {
     return next(error);
   }
@@ -71,7 +106,11 @@ async function updatePlan(req, res, next) {
 async function deletePlan(req, res, next) {
   try {
     const plan = await Plan.findByIdAndDelete(req.params.id);
-    if (!plan) return res.status(404).json({ message: "Plan not found" });
+    if (!plan) return errorResponse({
+      res: res,
+      statusCode: 404,
+      message: "Plan not found"
+    });
     
     await AuditLog.create({
       actorId: req.user?.userId,
@@ -81,7 +120,10 @@ async function deletePlan(req, res, next) {
       ip: req.ip
     });
     
-    return res.json({ message: "Plan deleted" });
+    return successResponse({
+      res: res,
+      message: "Plan deleted"
+    });
   } catch (error) {
     return next(error);
   }

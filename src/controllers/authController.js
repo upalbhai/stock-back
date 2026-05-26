@@ -1,3 +1,5 @@
+import { successResponse } from "../utils/successResponse.js";
+import { errorResponse } from "../utils/errorResponse.js";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import mongoose from "mongoose";
@@ -31,20 +33,32 @@ async function register(req, res, next) {
     const { name, email, password, phone, businessName, outletName, outletId } = req.body;
 
     if (!businessName && !outletId) {
-      return res.status(400).json({ message: "businessName or outletId is required" });
+      return errorResponse({
+        res: res,
+        statusCode: 400,
+        message: "businessName or outletId is required"
+      });
     }
 
     // Check existing by email
     const existingEmail = await User.findOne({ email: email.toLowerCase() });
     if (existingEmail) {
-      return res.status(409).json({ message: "An account with this email already exists" });
+      return errorResponse({
+        res: res,
+        statusCode: 409,
+        message: "An account with this email already exists"
+      });
     }
 
     // Check existing by phone if provided
     if (phone) {
       const existingPhone = await User.findOne({ phone });
       if (existingPhone) {
-        return res.status(409).json({ message: "An account with this phone already exists" });
+        return errorResponse({
+          res: res,
+          statusCode: 409,
+          message: "An account with this phone already exists"
+        });
       }
     }
 
@@ -141,7 +155,9 @@ async function register(req, res, next) {
     }
 
     // We no longer return the token instantly here so they are forced to verify their email
-    return res.status(201).json({
+    return successResponse({
+      res: res,
+      statusCode: 201,
       message: "Registration successful. Please check your email for the verification code."
     });
   } catch (error) {
@@ -156,15 +172,27 @@ async function loginWithEmail(req, res, next) {
     const user = await User.findOne({ email: email.toLowerCase(), isActive: true }).populate("roleId").lean();
 
     if (!user) {
-      return res.status(401).json({ message: "Invalid email or password" });
+      return errorResponse({
+        res: res,
+        statusCode: 401,
+        message: "Invalid email or password"
+      });
     }
     if (!user.passwordHash) {
-      return res.status(401).json({ message: "Password login not set up. Use OTP login instead." });
+      return errorResponse({
+        res: res,
+        statusCode: 401,
+        message: "Password login not set up. Use OTP login instead."
+      });
     }
 
     const isValid = await bcrypt.compare(password, user.passwordHash);
     if (!isValid) {
-      return res.status(401).json({ message: "Invalid email or password" });
+      return errorResponse({
+        res: res,
+        statusCode: 401,
+        message: "Invalid email or password"
+      });
     }
 
     // Check subscription status
@@ -222,18 +250,23 @@ async function loginWithEmail(req, res, next) {
       userAgent: req.headers["user-agent"]
     });
 
-    return res.json({
-      token,
-      user: {
-        id: user._id,
-        name: user.name,
-        role: user.role,
-        businessId: user.businessId,
-        outletId: primaryOutletId,
-        outletIds: user.outletIds?.map((id) => id.toString()) || [],
-        subscriptionStatus,
-        trialEndsAt,
-        trialExpired
+    return successResponse({
+      res: res,
+
+      data: {
+        token,
+
+        user: {
+          id: user._id,
+          name: user.name,
+          role: user.role,
+          businessId: user.businessId,
+          outletId: primaryOutletId,
+          outletIds: user.outletIds?.map((id) => id.toString()) || [],
+          subscriptionStatus,
+          trialEndsAt,
+          trialExpired
+        }
       }
     });
   } catch (error) {
@@ -247,14 +280,26 @@ async function login(req, res, next) {
     const { phone, pin } = req.body;
     const user = await User.findOne({ phone, isActive: true }).populate("roleId").lean();
     if (!user) {
-      return res.status(401).json({ message: "Invalid credentials" });
+      return errorResponse({
+        res: res,
+        statusCode: 401,
+        message: "Invalid credentials"
+      });
     }
     if (!user.pinHash) {
-      return res.status(401).json({ message: "PIN login not available for this account" });
+      return errorResponse({
+        res: res,
+        statusCode: 401,
+        message: "PIN login not available for this account"
+      });
     }
     const isValid = await bcrypt.compare(pin, user.pinHash);
     if (!isValid) {
-      return res.status(401).json({ message: "Invalid credentials" });
+      return errorResponse({
+        res: res,
+        statusCode: 401,
+        message: "Invalid credentials"
+      });
     }
 
     // Check subscription
@@ -303,18 +348,23 @@ async function login(req, res, next) {
       userAgent: req.headers["user-agent"]
     });
 
-    return res.json({
-      token,
-      user: {
-        id: user._id,
-        name: user.name,
-        role: user.role,
-        businessId: user.businessId,
-        outletId: primaryOutletId,
-        outletIds: user.outletIds?.map((id) => id.toString()) || [],
-        subscriptionStatus,
-        trialEndsAt,
-        trialExpired
+    return successResponse({
+      res: res,
+
+      data: {
+        token,
+
+        user: {
+          id: user._id,
+          name: user.name,
+          role: user.role,
+          businessId: user.businessId,
+          outletId: primaryOutletId,
+          outletIds: user.outletIds?.map((id) => id.toString()) || [],
+          subscriptionStatus,
+          trialEndsAt,
+          trialExpired
+        }
       }
     });
   } catch (error) {
@@ -327,7 +377,11 @@ async function getMe(req, res, next) {
   try {
     const user = await User.findById(req.user?.userId).select("-pinHash -passwordHash -inviteToken").populate("roleId", "name permissions outletScope outletIds").lean();
     if (!user) {
-      return res.status(404).json({ message: "User not found" });
+      return errorResponse({
+        res: res,
+        statusCode: 404,
+        message: "User not found"
+      });
     }
 
     // Include subscription info
@@ -341,7 +395,13 @@ async function getMe(req, res, next) {
       }
     }
 
-    return res.json({ user: { ...user, subscriptionStatus, trialEndsAt } });
+    return successResponse({
+      res: res,
+
+      data: {
+        user: { ...user, subscriptionStatus, trialEndsAt }
+      }
+    });
   } catch (error) {
     return next(error);
   }
@@ -351,11 +411,19 @@ async function getMe(req, res, next) {
 async function checkEmail(req, res, next) {
   try {
     const { email } = req.body;
-    if (!email) return res.status(400).json({ message: "Email is required" });
+    if (!email) return errorResponse({
+      res: res,
+      statusCode: 400,
+      message: "Email is required"
+    });
     
     const user = await User.findOne({ email: email.toLowerCase(), isActive: true });
     if (!user) {
-      return res.status(404).json({ message: "No account found with this email" });
+      return errorResponse({
+        res: res,
+        statusCode: 404,
+        message: "No account found with this email"
+      });
     }
 
     if (!user.emailVerified) {
@@ -367,11 +435,24 @@ async function checkEmail(req, res, next) {
       } catch (e) {
         console.warn("Failed to send OTP email", e.message);
       }
-      return res.json({ method: "otp", message: "Email not verified. OTP sent to your email." });
+      return successResponse({
+        res: res,
+        message: "Email not verified. OTP sent to your email.",
+
+        data: {
+          method: "otp"
+        }
+      });
     }
 
     if (user.passwordHash) {
-      return res.json({ method: "password" });
+      return successResponse({
+        res: res,
+
+        data: {
+          method: "password"
+        }
+      });
     }
 
     // If no password, generate and send OTP automatically
@@ -384,7 +465,14 @@ async function checkEmail(req, res, next) {
       console.warn("Failed to send OTP email", e.message);
     }
     
-    return res.json({ method: "otp", message: "OTP sent to your email" });
+    return successResponse({
+      res: res,
+      message: "OTP sent to your email",
+
+      data: {
+        method: "otp"
+      }
+    });
   } catch (error) {
     return next(error);
   }
@@ -394,7 +482,11 @@ async function checkEmail(req, res, next) {
 async function sendLoginOtp(req, res, next) {
   try {
     const { email } = req.body;
-    if (!email) return res.status(400).json({ message: "Email is required" });
+    if (!email) return errorResponse({
+      res: res,
+      statusCode: 400,
+      message: "Email is required"
+    });
     const code = makeCode();
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
     await EmailOtp.create({ email: email.toLowerCase(), code, type: "login", expiresAt });
@@ -403,7 +495,10 @@ async function sendLoginOtp(req, res, next) {
     } catch (e) {
       console.warn("Failed to send OTP email", e.message);
     }
-    return res.json({ message: "OTP sent to your email" });
+    return successResponse({
+      res: res,
+      message: "OTP sent to your email"
+    });
   } catch (error) {
     return next(error);
   }
@@ -413,22 +508,41 @@ async function sendLoginOtp(req, res, next) {
 async function verifyLoginOtp(req, res, next) {
   try {
     const { email, code } = req.body;
-    if (!email || !code) return res.status(400).json({ message: "Email and code are required" });
+    if (!email || !code) return errorResponse({
+      res: res,
+      statusCode: 400,
+      message: "Email and code are required"
+    });
     const otp = await EmailOtp.findOne({ email: email.toLowerCase(), code, used: false });
-    if (!otp) return res.status(400).json({ message: "Invalid code" });
-    if (new Date() > otp.expiresAt) return res.status(410).json({ message: "Code expired" });
+    if (!otp) return errorResponse({
+      res: res,
+      statusCode: 400,
+      message: "Invalid code"
+    });
+    if (new Date() > otp.expiresAt) return errorResponse({
+      res: res,
+      statusCode: 410,
+      message: "Code expired"
+    });
     otp.used = true;
     await otp.save();
 
     const user = await User.findOne({ email: email.toLowerCase() }).populate("roleId");
-    if (!user) return res.status(404).json({ message: "No user found for this email" });
+    if (!user) return errorResponse({
+      res: res,
+      statusCode: 404,
+      message: "No user found for this email"
+    });
 
     if (!user.emailVerified) {
       user.emailVerified = true;
       await user.save();
     }
     if (!user.isActive) {
-      return res.json({ message: "Email verified. Account awaiting activation." });
+      return successResponse({
+        res: res,
+        message: "Email verified. Account awaiting activation."
+      });
     }
 
     // Subscription check
@@ -470,18 +584,23 @@ async function verifyLoginOtp(req, res, next) {
       ip: req.ip
     });
 
-    return res.json({
-      token,
-      user: {
-        id: user._id,
-        name: user.name,
-        role: user.role,
-        businessId: user.businessId,
-        outletId: primaryOutletId,
-        outletIds: user.outletIds?.map((id) => id.toString()) || [],
-        subscriptionStatus,
-        trialEndsAt,
-        trialExpired
+    return successResponse({
+      res: res,
+
+      data: {
+        token,
+
+        user: {
+          id: user._id,
+          name: user.name,
+          role: user.role,
+          businessId: user.businessId,
+          outletId: primaryOutletId,
+          outletIds: user.outletIds?.map((id) => id.toString()) || [],
+          subscriptionStatus,
+          trialEndsAt,
+          trialExpired
+        }
       }
     });
   } catch (error) {
@@ -496,7 +615,10 @@ async function forgotPassword(req, res, next) {
     const user = await User.findOne({ email: email.toLowerCase() });
     if (!user) {
       // Don't leak user existence
-      return res.json({ message: "If an account exists, a reset code has been sent" });
+      return successResponse({
+        res: res,
+        message: "If an account exists, a reset code has been sent"
+      });
     }
     const code = makeCode();
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
@@ -506,7 +628,10 @@ async function forgotPassword(req, res, next) {
     } catch (e) {
       console.warn("Failed to send password reset email", e.message);
     }
-    return res.json({ message: "If an account exists, a reset code has been sent" });
+    return successResponse({
+      res: res,
+      message: "If an account exists, a reset code has been sent"
+    });
   } catch (error) {
     return next(error);
   }
@@ -517,18 +642,33 @@ async function resetPassword(req, res, next) {
   try {
     const { email, code, newPassword } = req.body;
     const otp = await EmailOtp.findOne({ email: email.toLowerCase(), code, used: false });
-    if (!otp) return res.status(400).json({ message: "Invalid or expired code" });
-    if (new Date() > otp.expiresAt) return res.status(410).json({ message: "Code expired" });
+    if (!otp) return errorResponse({
+      res: res,
+      statusCode: 400,
+      message: "Invalid or expired code"
+    });
+    if (new Date() > otp.expiresAt) return errorResponse({
+      res: res,
+      statusCode: 410,
+      message: "Code expired"
+    });
     otp.used = true;
     await otp.save();
 
     const user = await User.findOne({ email: email.toLowerCase() });
-    if (!user) return res.status(404).json({ message: "User not found" });
+    if (!user) return errorResponse({
+      res: res,
+      statusCode: 404,
+      message: "User not found"
+    });
 
     user.passwordHash = await bcrypt.hash(newPassword, 10);
     await user.save();
 
-    return res.json({ message: "Password reset successfully. You can now login." });
+    return successResponse({
+      res: res,
+      message: "Password reset successfully. You can now login."
+    });
   } catch (error) {
     return next(error);
   }
@@ -580,6 +720,52 @@ async function createDefaultRoles(businessId) {
   }
 }
 
+// ---------- SETUP / CHANGE PASSWORD ----------
+async function setupPassword(req, res, next) {
+  try {
+    const { newPassword, oldPassword } = req.body;
+    const user = await User.findById(req.user?.userId);
+
+    if (!user) {
+      return errorResponse({
+        res,
+        statusCode: 404,
+        message: "User not found"
+      });
+    }
+
+    // If user already has a password, verify it first
+    if (user.passwordHash && !oldPassword) {
+      return errorResponse({
+        res,
+        statusCode: 400,
+        message: "Old password is required to change password"
+      });
+    }
+
+    if (user.passwordHash && oldPassword) {
+      const isValid = await bcrypt.compare(oldPassword, user.passwordHash);
+      if (!isValid) {
+        return errorResponse({
+          res,
+          statusCode: 400,
+          message: "Incorrect old password"
+        });
+      }
+    }
+
+    user.passwordHash = await bcrypt.hash(newPassword, 10);
+    await user.save();
+
+    return successResponse({
+      res: res,
+      message: "Password set up successfully"
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
 export {
   getMe,
   login,
@@ -590,5 +776,6 @@ export {
   sendLoginOtp,
   verifyLoginOtp,
   forgotPassword,
-  resetPassword
+  resetPassword,
+  setupPassword
 };

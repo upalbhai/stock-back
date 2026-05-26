@@ -1,3 +1,5 @@
+import { successResponse } from "../utils/successResponse.js";
+import { errorResponse } from "../utils/errorResponse.js";
 import bcrypt from "bcryptjs";
 import { v4 as uuidv4 } from "uuid";
 import jwt from "jsonwebtoken";
@@ -25,7 +27,13 @@ async function listUsers(req, res, next) {
       .sort({ name: 1 })
       .lean();
 
-    return res.json({ users });
+    return successResponse({
+      res: res,
+
+      data: {
+        users
+      }
+    });
   } catch (error) {
     return next(error);
   }
@@ -39,8 +47,18 @@ async function getUser(req, res, next) {
       .populate("roleId", "name permissions outletScope outletIds")
       .lean();
 
-    if (!user) return res.status(404).json({ message: "User not found" });
-    return res.json({ user });
+    if (!user) return errorResponse({
+      res: res,
+      statusCode: 404,
+      message: "User not found"
+    });
+    return successResponse({
+      res: res,
+
+      data: {
+        user
+      }
+    });
   } catch (error) {
     return next(error);
   }
@@ -52,19 +70,35 @@ async function createUser(req, res, next) {
     const { name, phone, email, pin, role, roleId, outletIds } = req.body;
 
     const existingPhone = await User.findOne({ phone });
-    if (existingPhone) return res.status(409).json({ message: "Phone number already exists" });
+    if (existingPhone) return errorResponse({
+      res: res,
+      statusCode: 409,
+      message: "Phone number already exists"
+    });
 
     if (email) {
       const existingEmail = await User.findOne({ email: email.toLowerCase() });
-      if (existingEmail) return res.status(409).json({ message: "Email already exists" });
+      if (existingEmail) return errorResponse({
+        res: res,
+        statusCode: 409,
+        message: "Email already exists"
+      });
     }
 
     if (roleId) {
       const targetRole = await Role.findOne({ _id: roleId, businessId }).lean();
-      if (!targetRole) return res.status(404).json({ message: "Role not found" });
+      if (!targetRole) return errorResponse({
+        res: res,
+        statusCode: 404,
+        message: "Role not found"
+      });
       const ok = await canAssignPermissions(req, targetRole.permissions);
       if (!ok) {
-        return res.status(403).json({ message: "Cannot assign role with permissions you don't have" });
+        return errorResponse({
+          res: res,
+          statusCode: 403,
+          message: "Cannot assign role with permissions you don't have"
+        });
       }
     }
 
@@ -94,7 +128,14 @@ async function createUser(req, res, next) {
     });
 
     const clean = { ...user.toObject(), pinHash: void 0 };
-    return res.status(201).json({ user: clean });
+    return successResponse({
+      res: res,
+      statusCode: 201,
+
+      data: {
+        user: clean
+      }
+    });
   } catch (error) {
     return next(error);
   }
@@ -115,10 +156,18 @@ async function updateUser(req, res, next) {
 
     if (update.roleId) {
       const targetRole = await Role.findOne({ _id: update.roleId, businessId }).lean();
-      if (!targetRole) return res.status(404).json({ message: "Role not found" });
+      if (!targetRole) return errorResponse({
+        res: res,
+        statusCode: 404,
+        message: "Role not found"
+      });
       const ok = await canAssignPermissions(req, targetRole.permissions);
       if (!ok) {
-        return res.status(403).json({ message: "Cannot assign role with permissions you don't have" });
+        return errorResponse({
+          res: res,
+          statusCode: 403,
+          message: "Cannot assign role with permissions you don't have"
+        });
       }
     }
 
@@ -128,8 +177,18 @@ async function updateUser(req, res, next) {
       { new: true }
     ).select("-pinHash -inviteToken");
 
-    if (!user) return res.status(404).json({ message: "User not found" });
-    return res.json({ user });
+    if (!user) return errorResponse({
+      res: res,
+      statusCode: 404,
+      message: "User not found"
+    });
+    return successResponse({
+      res: res,
+
+      data: {
+        user
+      }
+    });
   } catch (error) {
     return next(error);
   }
@@ -143,8 +202,15 @@ async function deleteUser(req, res, next) {
       { $set: { isActive: false } },
       { new: true }
     );
-    if (!user) return res.status(404).json({ message: "User not found" });
-    return res.json({ message: "User deactivated" });
+    if (!user) return errorResponse({
+      res: res,
+      statusCode: 404,
+      message: "User not found"
+    });
+    return successResponse({
+      res: res,
+      message: "User deactivated"
+    });
   } catch (error) {
     return next(error);
   }
@@ -157,10 +223,18 @@ async function createInvite(req, res, next) {
 
     if (roleId) {
       const targetRole = await Role.findOne({ _id: roleId, businessId }).lean();
-      if (!targetRole) return res.status(404).json({ message: "Role not found" });
+      if (!targetRole) return errorResponse({
+        res: res,
+        statusCode: 404,
+        message: "Role not found"
+      });
       const ok = await canAssignPermissions(req, targetRole.permissions);
       if (!ok) {
-        return res.status(403).json({ message: "Cannot invite with a role you can't assign" });
+        return errorResponse({
+          res: res,
+          statusCode: 403,
+          message: "Cannot invite with a role you can't assign"
+        });
       }
     }
 
@@ -189,7 +263,15 @@ async function createInvite(req, res, next) {
       }
     }
 
-    return res.status(201).json({ invite, inviteLink });
+    return successResponse({
+      res: res,
+      statusCode: 201,
+
+      data: {
+        invite,
+        inviteLink
+      }
+    });
   } catch (error) {
     return next(error);
   }
@@ -202,10 +284,25 @@ async function getInvite(req, res, next) {
       .populate("roleId", "name")
       .lean();
 
-    if (!invite) return res.status(404).json({ message: "Invite not found or already used" });
-    if (new Date() > invite.expiresAt) return res.status(410).json({ message: "Invite expired" });
+    if (!invite) return errorResponse({
+      res: res,
+      statusCode: 404,
+      message: "Invite not found or already used"
+    });
+    if (new Date() > invite.expiresAt) return errorResponse({
+      res: res,
+      statusCode: 410,
+      message: "Invite expired"
+    });
 
-    return res.json({ invite, businessName: invite.businessId?.name });
+    return successResponse({
+      res: res,
+
+      data: {
+        invite,
+        businessName: invite.businessId?.name
+      }
+    });
   } catch (error) {
     return next(error);
   }
@@ -214,14 +311,30 @@ async function getInvite(req, res, next) {
 async function acceptInvite(req, res, next) {
   try {
     const invite = await Invite.findOne({ token: req.params.token, usedAt: null });
-    if (!invite) return res.status(404).json({ message: "Invite not found or already used" });
-    if (new Date() > invite.expiresAt) return res.status(410).json({ message: "Invite expired" });
+    if (!invite) return errorResponse({
+      res: res,
+      statusCode: 404,
+      message: "Invite not found or already used"
+    });
+    if (new Date() > invite.expiresAt) return errorResponse({
+      res: res,
+      statusCode: 410,
+      message: "Invite expired"
+    });
 
     const { name, pin } = req.body;
     const existingPhone = invite.phone ? await User.findOne({ phone: invite.phone }) : null;
-    if (existingPhone) return res.status(409).json({ message: "Phone number already registered on the platform" });
+    if (existingPhone) return errorResponse({
+      res: res,
+      statusCode: 409,
+      message: "Phone number already registered on the platform"
+    });
     const existingEmail = invite.email ? await User.findOne({ email: invite.email }) : null;
-    if (existingEmail) return res.status(409).json({ message: "Email already registered on the platform" });
+    if (existingEmail) return errorResponse({
+      res: res,
+      statusCode: 409,
+      message: "Email already registered on the platform"
+    });
 
     const pinHash = await bcrypt.hash(pin, 10);
     const user = await User.create({
@@ -264,15 +377,21 @@ async function acceptInvite(req, res, next) {
       { expiresIn: "7d" }
     );
 
-    return res.status(201).json({
-      token: jwtToken,
-      user: {
-        id: user._id,
-        name: user.name,
-        role: user.role,
-        businessId: invite.businessId,
-        outletId: invite.outletIds?.[0] || null,
-        outletIds: invite.outletIds || []
+    return successResponse({
+      res: res,
+      statusCode: 201,
+
+      data: {
+        token: jwtToken,
+
+        user: {
+          id: user._id,
+          name: user.name,
+          role: user.role,
+          businessId: invite.businessId,
+          outletId: invite.outletIds?.[0] || null,
+          outletIds: invite.outletIds || []
+        }
       }
     });
   } catch (error) {

@@ -1,3 +1,5 @@
+import { successResponse } from "../utils/successResponse.js";
+import { errorResponse } from "../utils/errorResponse.js";
 import { Outlet } from "../models/Outlet.js";
 import { Business } from "../models/Business.js";
 import { AuditLog } from "../models/AuditLog.js";
@@ -12,7 +14,13 @@ async function listOutlets(req, res, next) {
       query._id = { $in: outletIds };
     }
     const outlets = await Outlet.find(query).populate("managerId", "name phone").sort({ createdAt: 1 }).lean();
-    return res.json({ outlets });
+    return successResponse({
+      res: res,
+
+      data: {
+        outlets
+      }
+    });
   } catch (error) {
     return next(error);
   }
@@ -51,7 +59,14 @@ async function createOutlet(req, res, next) {
       message: `Outlet created: ${outlet.name} (status: ${outlet.status})`,
       ip: req.ip
     });
-    return res.status(201).json({ outlet });
+    return successResponse({
+      res: res,
+      statusCode: 201,
+
+      data: {
+        outlet
+      }
+    });
   } catch (error) {
     return next(error);
   }
@@ -69,7 +84,11 @@ async function updateOutlet(req, res, next) {
       { $set: update },
       { new: true }
     );
-    if (!outlet) return res.status(404).json({ message: "Outlet not found" });
+    if (!outlet) return errorResponse({
+      res: res,
+      statusCode: 404,
+      message: "Outlet not found"
+    });
     await AuditLog.create({
       businessId,
       actorId: req.user?.userId,
@@ -81,7 +100,13 @@ async function updateOutlet(req, res, next) {
       message: `Outlet updated: ${outlet.name}`,
       ip: req.ip
     });
-    return res.json({ outlet });
+    return successResponse({
+      res: res,
+
+      data: {
+        outlet
+      }
+    });
   } catch (error) {
     return next(error);
   }
@@ -94,8 +119,15 @@ async function deleteOutlet(req, res, next) {
       { $set: { isActive: false } },
       { new: true }
     );
-    if (!outlet) return res.status(404).json({ message: "Outlet not found" });
-    return res.json({ message: "Outlet deactivated" });
+    if (!outlet) return errorResponse({
+      res: res,
+      statusCode: 404,
+      message: "Outlet not found"
+    });
+    return successResponse({
+      res: res,
+      message: "Outlet deactivated"
+    });
   } catch (error) {
     return next(error);
   }
@@ -104,8 +136,18 @@ async function getOutlet(req, res, next) {
   try {
     const { businessId } = req.user;
     const outlet = await Outlet.findOne({ _id: req.params.id, businessId }).populate("managerId", "name phone role").lean();
-    if (!outlet) return res.status(404).json({ message: "Outlet not found" });
-    return res.json({ outlet });
+    if (!outlet) return errorResponse({
+      res: res,
+      statusCode: 404,
+      message: "Outlet not found"
+    });
+    return successResponse({
+      res: res,
+
+      data: {
+        outlet
+      }
+    });
   } catch (error) {
     return next(error);
   }

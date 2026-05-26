@@ -1,13 +1,25 @@
+import { successResponse } from "../utils/successResponse.js";
+import { errorResponse } from "../utils/errorResponse.js";
 import { Business } from "../models/Business.js";
 import { Outlet } from "../models/Outlet.js";
 async function getMyBusiness(req, res, next) {
   try {
     const business = await Business.findOne({ ownerId: req.user?.userId }).lean();
     if (!business) {
-      return res.status(404).json({ message: "Business not found" });
+      return errorResponse({
+        res: res,
+        statusCode: 404,
+        message: "Business not found"
+      });
     }
     const outletCount = await Outlet.countDocuments({ businessId: business._id, isActive: true });
-    return res.json({ business: { ...business, outletCount } });
+    return successResponse({
+      res: res,
+
+      data: {
+        business: { ...business, outletCount }
+      }
+    });
   } catch (error) {
     return next(error);
   }
@@ -34,7 +46,13 @@ async function updateMyBusiness(req, res, next) {
       { $set: update },
       { new: true }
     );
-    return res.json({ business });
+    return successResponse({
+      res: res,
+
+      data: {
+        business
+      }
+    });
   } catch (error) {
     return next(error);
   }
