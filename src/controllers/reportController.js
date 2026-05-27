@@ -24,7 +24,7 @@ async function getDailyReport(req, res, next) {
     }
     const query = { businessId, status: "completed", createdAt: { $gte: start, $lte: end } };
     if (outletId) query.outletId = outletId;
-    const orders = await Order.find(query).populate("payments").lean();
+    const orders = await Order.find(query).populate("payments").populate("createdBy", "name").lean();
     const totalSales = orders.reduce((s, o) => s + o.total, 0);
     const totalOrders = orders.length;
     const paymentSummary = { cash: 0, upi: 0, card: 0, wallet: 0, split: 0 };
@@ -38,17 +38,28 @@ async function getDailyReport(req, res, next) {
       }
     }
     const productSales = {};
+    const staffSalesMap = {};
+
     for (const order of orders) {
+      // Aggregate product sales
       for (const item of order.items) {
         if (!productSales[item.name]) productSales[item.name] = { name: item.name, qty: 0, total: 0 };
         productSales[item.name].qty += item.qty;
         productSales[item.name].total += item.lineTotal;
       }
+      
+      // Aggregate staff sales
+      const staffName = order.createdBy?.name || "Unknown/Online";
+      if (!staffSalesMap[staffName]) staffSalesMap[staffName] = { name: staffName, revenue: 0, orders: 0 };
+      staffSalesMap[staffName].revenue += order.total;
+      staffSalesMap[staffName].orders += 1;
     }
     const bestSelling = Object.values(productSales).sort((a, b) => b.qty - a.qty).slice(0, 10);
+    const staffSales = Object.values(staffSalesMap).sort((a, b) => b.revenue - a.revenue);
+
     return successResponse({
       res: res,
-      data: { totalSales, totalOrders, paymentSummary, bestSelling }
+      data: { totalSales, totalOrders, paymentSummary, bestSelling, staffSales }
     });
   } catch (error) {
     return next(error);

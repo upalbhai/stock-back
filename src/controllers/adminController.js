@@ -65,10 +65,18 @@ async function adminToggleBusiness(req, res, next) {
 }
 async function adminUpdatePlan(req, res, next) {
   try {
-    const { planId, maxOutlets } = req.body;
+    const { planId, maxOutlets, subscriptionStatus, currentPeriodEnd } = req.body;
+    
+    // Construct the fields to update dynamically
+    const updateFields = {};
+    if (planId !== undefined) updateFields.planId = planId;
+    if (maxOutlets !== undefined) updateFields.maxOutlets = maxOutlets;
+    if (subscriptionStatus !== undefined) updateFields.subscriptionStatus = subscriptionStatus;
+    if (currentPeriodEnd !== undefined) updateFields.currentPeriodEnd = currentPeriodEnd;
+
     const business = await Business.findByIdAndUpdate(
       req.params.id,
-      { $set: { planId, maxOutlets } },
+      { $set: updateFields },
       { new: true }
     );
     if (!business) return errorResponse({
@@ -76,6 +84,18 @@ async function adminUpdatePlan(req, res, next) {
       statusCode: 404,
       message: "Business not found"
     });
+    
+    await AuditLog.create({
+      actorId: req.user?.userId,
+      module: "admin",
+      action: "manual_plan_update",
+      targetType: "Business",
+      targetId: business._id,
+      targetName: business.name,
+      message: `Admin manually updated plan/subscription for ${business.name}`,
+      ip: req.ip
+    });
+
     return successResponse({
       res: res,
 

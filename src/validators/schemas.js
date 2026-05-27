@@ -145,8 +145,11 @@ export const adminStatusSchema = z.object({
 
 export const adminPlanSchema = z.object({
   plan: z.enum(["free", "starter", "pro", "enterprise"]).optional(),
+  planId: z.string().optional(),
   planExpiresAt: z.string().datetime().optional().or(z.date().optional()),
-  maxOutlets: z.number().int().min(1).optional()
+  maxOutlets: z.number().int().min(1).optional(),
+  subscriptionStatus: z.enum(["trial", "active", "expired", "cancelled"]).optional(),
+  currentPeriodEnd: z.string().datetime().optional().or(z.date().optional()),
 });
 
 export const adminImpersonateSchema = z.object({
