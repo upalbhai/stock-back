@@ -8,7 +8,7 @@ export const passwordSchema = z.string().min(6, "Password must be at least 6 cha
 export const registerSchema = z.object({
   name: z.string().trim().min(2, "Name is required"),
   email: emailSchema,
-  password: passwordSchema,
+  password: passwordSchema.optional(),
   phone: phoneSchema.optional(),
   businessName: z.string().trim().min(2, "Business name is required"),
   outletName: z.string().trim().min(2).optional(),
@@ -229,7 +229,7 @@ export const stockAdjustSchema = z.object({
   productId: z.string().trim().min(1, "Product is required"),
   outletId: z.string().trim().min(1, "Outlet is required"),
   qty: z.number(),
-  type: z.enum(["adjustment", "opening", "sale", "return", "transfer_in", "transfer_out"]).optional(),
+  type: z.enum(["adjustment", "opening", "sale", "return", "transfer_in", "transfer_out", "purchase", "wastage"]).optional(),
   note: z.string().trim().optional()
 }).passthrough();
 

@@ -1,5 +1,11 @@
 import jwt from "jsonwebtoken";
 import { env } from "../config/env.js";
+import { Session } from "../models/Session.js";
+
+// Throttle lastActiveAt updates — track per session, max once per 5 minutes
+const lastActiveCache = new Map();
+const ACTIVE_THROTTLE = 5 * 60 * 1000; // 5 minutes
+
 function requireAuth(req, res, next) {
   if (req.user) return next();
   const authHeader = req.headers.authorization;
@@ -13,11 +19,61 @@ function requireAuth(req, res, next) {
   try {
     const payload = jwt.verify(token, env.JWT_SECRET);
     req.user = payload;
+
+    // If session tracking is active (sessionId in token), validate session
+    if (payload.sessionId) {
+      // Non-blocking session validation + lastActiveAt update
+      validateSession(payload.sessionId, res, next);
+      return; // validateSession calls next() or returns 401
+    }
+
     return next();
   } catch {
     return res.status(401).json({ message: "Invalid or expired token" });
   }
 }
+
+async function validateSession(sessionId, res, next) {
+  try {
+    const session = await Session.findById(sessionId).select("isRevoked expiresAt").lean();
+
+    if (!session) {
+      return res.status(401).json({ message: "Session not found. Please login again." });
+    }
+
+    if (session.isRevoked) {
+      return res.status(401).json({ message: "Session has been revoked. Please login again." });
+    }
+
+    if (new Date() > new Date(session.expiresAt)) {
+      return res.status(401).json({ message: "Session expired. Please login again." });
+    }
+
+    // Throttled lastActiveAt update
+    const now = Date.now();
+    const lastUpdate = lastActiveCache.get(sessionId);
+    if (!lastUpdate || now - lastUpdate > ACTIVE_THROTTLE) {
+      lastActiveCache.set(sessionId, now);
+      // Fire and forget — don't await
+      Session.findByIdAndUpdate(sessionId, { lastActiveAt: new Date() }).catch(() => {});
+
+      // Evict stale cache entries periodically
+      if (lastActiveCache.size > 1000) {
+        for (const [key, val] of lastActiveCache) {
+          if (now - val > ACTIVE_THROTTLE * 2) lastActiveCache.delete(key);
+        }
+      }
+    }
+
+    return next();
+  } catch (err) {
+    // If session check fails (DB down, etc.), allow request through
+    // to avoid locking out users during transient DB issues
+    console.error("Session validation error:", err.message);
+    return next();
+  }
+}
+
 function requireSuperAdmin(req, res, next) {
   requireAuth(req, res, () => {
     if (req.user?.role !== "superadmin") {

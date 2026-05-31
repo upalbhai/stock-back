@@ -10,7 +10,8 @@ import {
   getPasswordResetOtpTemplate,
   getTrialExpiringEmailTemplate,
   getTrialExpiredEmailTemplate,
-  getSubscriptionConfirmationTemplate
+  getSubscriptionConfirmationTemplate,
+  getNewDeviceLoginTemplate
 } from "./emailTemplates.js";
 
 const BREVO_API = "https://api.brevo.com/v3/smtp/email";
@@ -116,6 +117,18 @@ export async function sendSubscriptionConfirmation(email, planName, amount, endD
   return sendEmail({ to: email, subject, html });
 }
 
+export async function sendNewDeviceLoginEmail(email, name, deviceInfo) {
+  if (!email) return;
+  const { subject, html } = getNewDeviceLoginTemplate(
+    name,
+    deviceInfo.deviceName,
+    deviceInfo.location,
+    deviceInfo.ip,
+    deviceInfo.time || new Date()
+  );
+  return sendEmail({ to: email, subject, html });
+}
+
 export default {
   sendEmail,
   sendOtpEmail,
@@ -128,5 +141,6 @@ export default {
   sendPasswordResetOtp,
   sendTrialExpiringEmail,
   sendTrialExpiredEmail,
-  sendSubscriptionConfirmation
+  sendSubscriptionConfirmation,
+  sendNewDeviceLoginEmail
 };

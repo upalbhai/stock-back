@@ -103,3 +103,33 @@ export const getSubscriptionConfirmationTemplate = (planName, amount, endDate) =
     `
   };
 };
+
+export const getNewDeviceLoginTemplate = (name, deviceName, location, ip, time) => {
+  const locationStr = [location?.city, location?.region, location?.country]
+    .filter(Boolean)
+    .join(", ") || "Unknown location";
+  const timeStr = new Date(time).toLocaleString("en-IN", {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: "Asia/Kolkata"
+  });
+  return {
+    subject: "New device login detected on your account",
+    html: `
+      <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 520px; margin: 0 auto;">
+        <h2 style="color: #1a1a2e;">New Login Detected</h2>
+        <p>Hi ${name || "there"},</p>
+        <p>We noticed a new sign-in to your Outlet Pulse account from a device we haven't seen before.</p>
+        <table style="width: 100%; border-collapse: collapse; margin: 20px 0; background: #f8f9fa; border-radius: 12px; overflow: hidden;">
+          <tr><td style="padding: 12px 16px; color: #666; font-size: 13px;">Device</td><td style="padding: 12px 16px; font-weight: 600;">${deviceName || "Unknown device"}</td></tr>
+          <tr style="border-top: 1px solid #e9ecef;"><td style="padding: 12px 16px; color: #666; font-size: 13px;">Location</td><td style="padding: 12px 16px; font-weight: 600;">${locationStr}</td></tr>
+          <tr style="border-top: 1px solid #e9ecef;"><td style="padding: 12px 16px; color: #666; font-size: 13px;">IP Address</td><td style="padding: 12px 16px; font-weight: 600; font-family: monospace;">${ip || "Unknown"}</td></tr>
+          <tr style="border-top: 1px solid #e9ecef;"><td style="padding: 12px 16px; color: #666; font-size: 13px;">Time</td><td style="padding: 12px 16px; font-weight: 600;">${timeStr}</td></tr>
+        </table>
+        <p style="color: #444;">If this was you, no action is needed.</p>
+        <p style="color: #c0392b; font-weight: 600;">If this wasn't you, please change your password immediately and revoke unknown sessions from your account settings.</p>
+      </div>
+    `
+  };
+};
+

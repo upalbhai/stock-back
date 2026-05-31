@@ -11,8 +11,11 @@ import { Outlet } from "../models/Outlet.js";
 import { Role } from "../models/Role.js";
 import { AuditLog } from "../models/AuditLog.js";
 import { EmailOtp } from "../models/EmailOtp.js";
+import { Session } from "../models/Session.js";
 import mailer from "../utils/mailer.js";
 import crypto from "crypto";
+import { parseDevice } from "../utils/parseDevice.js";
+import { resolveLocation } from "../utils/geoip.js";
 
 function slugify(str) {
   return str.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 24) || "biz";
@@ -25,6 +28,67 @@ function createToken(payload) {
 }
 function makeCode() {
   return Math.floor(100000 + Math.random() * 900000).toString();
+}
+
+/**
+ * Create a login session, detect new devices, and send alert emails.
+ * Returns { token, session } where token includes sessionId.
+ */
+async function createLoginSession({ user, req, tokenPayload }) {
+  const userAgent = req.headers["user-agent"] || "";
+  const ip = req.ip || req.connection?.remoteAddress || "";
+  const device = parseDevice(userAgent);
+  const location = await resolveLocation(ip);
+
+  // Create JWT with a placeholder sessionId (we'll update after session creation)
+  const sessionId = new mongoose.Types.ObjectId();
+  const token = createToken({ ...tokenPayload, sessionId: sessionId.toString() });
+  const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+
+  // Create session document
+  const session = await Session.create({
+    _id: sessionId,
+    userId: user._id,
+    tokenHash,
+    deviceName: device.deviceName,
+    deviceType: device.deviceType,
+    browser: device.browser,
+    os: device.os,
+    ip,
+    location,
+    lastActiveAt: new Date(),
+    expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) // 7 days
+  });
+
+  // Detect new device: check if user has logged in with this deviceName before
+  try {
+    const previousSession = await Session.findOne({
+      userId: user._id,
+      deviceName: device.deviceName,
+      _id: { $ne: sessionId }
+    });
+
+    if (!previousSession && user.email) {
+      // New device — send alert email (non-blocking)
+      mailer.sendNewDeviceLoginEmail(user.email, user.name, {
+        deviceName: device.deviceName,
+        location,
+        ip,
+        time: new Date()
+      }).catch((e) => console.warn("Failed to send new device login email", e.message));
+    }
+  } catch (e) {
+    console.warn("New device check failed", e.message);
+  }
+
+  // Update user last login info
+  await User.findByIdAndUpdate(user._id, {
+    lastLoginAt: new Date(),
+    lastLoginIp: ip,
+    lastLoginDevice: userAgent.slice(0, 200)
+  });
+
+  return { token, session };
 }
 
 // ---------- REGISTER (email + password, auto-trial) ----------
@@ -222,20 +286,18 @@ async function loginWithEmail(req, res, next) {
       }
     }
 
-    await User.findByIdAndUpdate(user._id, {
-      lastLoginAt: new Date(),
-      lastLoginIp: req.ip,
-      lastLoginDevice: req.headers["user-agent"]?.slice(0, 200)
-    });
-
     const primaryOutletId = user.outletIds?.[0]?.toString() || undefined;
-    const token = createToken({
-      userId: user._id.toString(),
-      role: user.role,
-      businessId: user.businessId?.toString(),
-      outletId: primaryOutletId,
-      outletIds: user.outletIds?.map((id) => id.toString()) || [],
-      roleId: user.roleId?.toString()
+    const { token } = await createLoginSession({
+      user,
+      req,
+      tokenPayload: {
+        userId: user._id.toString(),
+        role: user.role,
+        businessId: user.businessId?.toString(),
+        outletId: primaryOutletId,
+        outletIds: user.outletIds?.map((id) => id.toString()) || [],
+        roleId: user.roleId?.toString()
+      }
     });
 
     await AuditLog.create({
@@ -320,20 +382,18 @@ async function login(req, res, next) {
       }
     }
 
-    await User.findByIdAndUpdate(user._id, {
-      lastLoginAt: new Date(),
-      lastLoginIp: req.ip,
-      lastLoginDevice: req.headers["user-agent"]?.slice(0, 200)
-    });
-
     const primaryOutletId = user.outletIds?.[0]?.toString() || undefined;
-    const token = createToken({
-      userId: user._id.toString(),
-      role: user.role,
-      businessId: user.businessId?.toString(),
-      outletId: primaryOutletId,
-      outletIds: user.outletIds?.map((id) => id.toString()) || [],
-      roleId: user.roleId?.toString()
+    const { token } = await createLoginSession({
+      user,
+      req,
+      tokenPayload: {
+        userId: user._id.toString(),
+        role: user.role,
+        businessId: user.businessId?.toString(),
+        outletId: primaryOutletId,
+        outletIds: user.outletIds?.map((id) => id.toString()) || [],
+        roleId: user.roleId?.toString()
+      }
     });
 
     await AuditLog.create({
@@ -564,13 +624,17 @@ async function verifyLoginOtp(req, res, next) {
     }
 
     const primaryOutletId = user.outletIds?.[0]?.toString() || undefined;
-    const token = createToken({
-      userId: user._id.toString(),
-      role: user.role,
-      businessId: user.businessId?.toString(),
-      outletId: primaryOutletId,
-      outletIds: user.outletIds?.map((id) => id.toString()) || [],
-      roleId: user.roleId?.toString()
+    const { token } = await createLoginSession({
+      user,
+      req,
+      tokenPayload: {
+        userId: user._id.toString(),
+        role: user.role,
+        businessId: user.businessId?.toString(),
+        outletId: primaryOutletId,
+        outletIds: user.outletIds?.map((id) => id.toString()) || [],
+        roleId: user.roleId?.toString()
+      }
     });
 
     await AuditLog.create({
