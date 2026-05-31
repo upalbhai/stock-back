@@ -362,6 +362,36 @@ async function adminSetOutletStatus(req, res, next) {
     return next(error);
   }
 }
+async function adminListOutlets(req, res, next) {
+  try {
+    const { search, status, page = 1, limit = 20 } = req.query;
+    const query = {};
+    if (status) query.status = status;
+    if (search) query.name = { $regex: search, $options: "i" };
+    
+    const skip = (Number(page) - 1) * Number(limit);
+    const [outlets, total] = await Promise.all([
+      (await import("../models/Outlet.js")).Outlet.find(query)
+        .populate("businessId", "name")
+        .populate("managerId", "name email phone")
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(Number(limit))
+        .lean(),
+      (await import("../models/Outlet.js")).Outlet.countDocuments(query)
+    ]);
+
+    return successResponse({
+      res,
+      data: {
+        outlets,
+        total
+      }
+    });
+  } catch (error) {
+    return next(error);
+  }
+}
 export {
   adminImpersonate,
   adminListBusinesses,
@@ -372,5 +402,6 @@ export {
   adminApproveBusiness,
   adminSetBusinessStatus,
   adminApproveOutlet,
-  adminSetOutletStatus
+  adminSetOutletStatus,
+  adminListOutlets
 };

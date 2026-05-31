@@ -173,6 +173,16 @@ export const categoryCreateSchema = z.object({
 
 export const categoryUpdateSchema = categoryCreateSchema.partial().passthrough();
 
+export const unitCreateSchema = z.object({
+  name: z.string().trim().min(1, "Unit name is required"),
+  key: z.string().trim().optional(),
+  abbreviation: z.string().trim().optional(),
+  outletId: z.string().trim().optional().nullable(),
+  sortOrder: z.number().int().optional()
+}).passthrough();
+
+export const unitUpdateSchema = unitCreateSchema.partial().passthrough();
+
 export const productCreateSchema = z.object({
   outletId: z.string().trim().min(1, "Outlet is required"),
   name: z.string().trim().min(2, "Product name is required"),

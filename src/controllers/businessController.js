@@ -4,7 +4,10 @@ import { Business } from "../models/Business.js";
 import { Outlet } from "../models/Outlet.js";
 async function getMyBusiness(req, res, next) {
   try {
-    const business = await Business.findOne({ ownerId: req.user?.userId }).lean();
+    const query = req.user?.role === "superadmin" && req.query.businessId
+      ? { _id: req.query.businessId }
+      : { ownerId: req.user?.userId };
+    const business = await Business.findOne(query).lean();
     if (!business) {
       return errorResponse({
         res: res,
@@ -41,8 +44,11 @@ async function updateMyBusiness(req, res, next) {
     for (const key of allowed) {
       if (req.body[key] !== void 0) update[key] = req.body[key];
     }
+    const query = req.user?.role === "superadmin" && (req.body.businessId || req.query.businessId)
+      ? { _id: req.body.businessId || req.query.businessId }
+      : { ownerId: req.user?.userId };
     const business = await Business.findOneAndUpdate(
-      { ownerId: req.user?.userId },
+      query,
       { $set: update },
       { new: true }
     );

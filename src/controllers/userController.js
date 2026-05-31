@@ -14,9 +14,13 @@ import mailer from "../utils/mailer.js";
 
 async function listUsers(req, res, next) {
   try {
-    const { businessId } = req.user;
+    let businessId = req.user.businessId;
+    if (req.user.role === "superadmin" && req.query.businessId) {
+      businessId = req.query.businessId;
+    }
     const { outletId, role, isActive } = req.query;
-    const query = { businessId };
+    const query = {};
+    if (businessId) query.businessId = businessId;
     if (outletId) query.outletIds = outletId;
     if (role) query.role = role;
     if (isActive !== void 0) query.isActive = isActive === "true";

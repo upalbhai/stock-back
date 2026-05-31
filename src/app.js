@@ -8,6 +8,7 @@ import { authRouter } from "./routes/auth.js";
 import { businessRouter } from "./routes/businesses.js";
 import { outletRouter } from "./routes/outlets.js";
 import { categoryRouter } from "./routes/categories.js";
+import { unitRouter } from "./routes/units.js";
 import { productRouter } from "./routes/products.js";
 import { stockRouter } from "./routes/stock.js";
 import { orderRouter } from "./routes/orders.js";
@@ -59,6 +60,7 @@ function createApp() {
   app.use("/api/businesses", requireAuth, requireActiveSubscription, businessRouter);
   app.use("/api/outlets", requireAuth, requireActiveSubscription, outletRouter);
   app.use("/api/categories", requireAuth, requireActiveSubscription, categoryRouter);
+  app.use("/api/units", requireAuth, requireActiveSubscription, unitRouter);
   app.use("/api/products", requireAuth, requireActiveSubscription, productRouter);
   app.use("/api/stock", requireAuth, requireActiveSubscription, stockRouter);
   app.use("/api/orders", requireAuth, requireActiveSubscription, orderRouter);

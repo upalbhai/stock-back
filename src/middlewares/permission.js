@@ -46,7 +46,33 @@ function requireBusiness(req, res, next) {
   }
   return next();
 }
+async function requireBusinessOwner(req, res, next) {
+  try {
+    if (req.user?.role === "superadmin") {
+      return next();
+    }
+    if (req.user?.role !== "owner") {
+      return res.status(403).json({ message: "Access denied: Owner role required" });
+    }
+    const targetBusinessId = req.params.businessId || req.params.id || req.body.businessId || req.query.businessId || req.user?.businessId;
+    if (!targetBusinessId) {
+      return res.status(400).json({ message: "Business ID is required" });
+    }
+    const { Business } = await import("../models/Business.js");
+    const business = await Business.findById(targetBusinessId).lean();
+    if (!business) {
+      return res.status(404).json({ message: "Business not found" });
+    }
+    if (business.ownerId.toString() !== req.user?.userId.toString()) {
+      return res.status(403).json({ message: "Access denied: You do not own this business" });
+    }
+    return next();
+  } catch (error) {
+    return next(error);
+  }
+}
 export {
   requireBusiness,
-  requirePermission
+  requirePermission,
+  requireBusinessOwner
 };

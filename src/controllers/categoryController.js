@@ -9,19 +9,34 @@ function makeSlug(name, businessId) {
 async function listCategories(req, res, next) {
   try {
     const { businessId } = req.user;
-    const { outletId, flat } = req.query;
+    const { outletId, flat, page = 1, limit = 50 } = req.query;
     const query = { businessId, isActive: true };
     if (outletId) query.$or = [{ outletId }, { outletId: null }];
-    const categories = await Category.find(query).sort({ parentId: 1, sortOrder: 1, name: 1 }).lean();
+
+    // If flat=true, return a flat list with pagination like products
     if (flat === "true") {
+      const numLimit = Number(limit);
+      const numPage = Number(page);
+      const categories = await Category.find(query).sort({ parentId: 1, sortOrder: 1, name: 1 }).skip((numPage - 1) * numLimit).limit(numLimit).lean();
+      const total = await Category.countDocuments(query);
+      const meta = {
+        pagination: {
+          page: numPage,
+          limit: numLimit,
+          total,
+          totalPages: Math.ceil(total / numLimit)
+        }
+      };
       return successResponse({
         res: res,
-
-        data: {
-          categories
-        }
+        message: "Categories fetched successfully",
+        data: categories,
+        meta
       });
     }
+
+    // Otherwise return nested tree (no pagination)
+    const categories = await Category.find(query).sort({ parentId: 1, sortOrder: 1, name: 1 }).lean();
     const topLevel = categories.filter((c) => !c.parentId);
     const buildTree = (parent) => ({
       ...parent,
@@ -31,7 +46,6 @@ async function listCategories(req, res, next) {
     });
     return successResponse({
       res: res,
-
       data: {
         categories: topLevel.map(buildTree)
       }
