@@ -40,8 +40,10 @@ export async function seedStandardUnits(businessId) {
   console.log("Seeding complete");
 }
 
+import { fileURLToPath } from "url";
+
 // If run directly from node, accept businessId argument
-if (require.main === module) {
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const businessId = process.argv[2];
   seedStandardUnits(businessId).then(() => process.exit(0)).catch(err => { console.error(err); process.exit(1); });
 }

@@ -203,12 +203,25 @@ async function approveTransfer(req, res, next) {
 async function listTransfers(req, res, next) {
   try {
     const { businessId } = req.user;
-    const transfers = await StockTransfer.find({ businessId }).populate("fromOutletId", "name").populate("toOutletId", "name").populate("requestedBy", "name").sort({ createdAt: -1 }).lean();
+    const { page = 1, limit = 50 } = req.query;
+    const skip = (Number(page) - 1) * Number(limit);
+    const [transfers, total] = await Promise.all([
+      StockTransfer.find({ businessId })
+        .populate("fromOutletId", "name")
+        .populate("toOutletId", "name")
+        .populate("requestedBy", "name")
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(Number(limit))
+        .lean(),
+      StockTransfer.countDocuments({ businessId })
+    ]);
     return successResponse({
       res: res,
 
       data: {
-        transfers
+        transfers,
+        total
       }
     });
   } catch (error) {
