@@ -8,7 +8,10 @@ const productSchema = new Schema(
     description: { type: String },
     sku: { type: String },
     barcode: { type: String },
-    unit: { type: String, required: true, default: "pcs" },
+    // unitId references the Unit collection (preferred). Keep `unit` string for
+    // backward compatibility during migration.
+    unitId: { type: Schema.Types.ObjectId, ref: "Unit" },
+    unit: { type: String, default: "pcs" },
     // kg, liter, pcs, packets
     price: { type: Number, required: true, min: 0 },
     costPrice: { type: Number, default: 0 },

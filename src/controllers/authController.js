@@ -16,6 +16,7 @@ import mailer from "../utils/mailer.js";
 import crypto from "crypto";
 import { parseDevice } from "../utils/parseDevice.js";
 import { resolveLocation } from "../utils/geoip.js";
+import { seedStandardUnits } from "../seeders/standardUnits.js";
 
 function slugify(str) {
   return str.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 24) || "biz";
@@ -186,6 +187,11 @@ async function register(req, res, next) {
     // Create default roles
     if (business) {
       await createDefaultRoles(business._id.toString());
+      try {
+        await seedStandardUnits(business._id.toString());
+      } catch (e) {
+        console.warn("Seeding standard units failed", e.message);
+      }
     }
 
     await AuditLog.create({

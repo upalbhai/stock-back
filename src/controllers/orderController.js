@@ -3,6 +3,7 @@ import { errorResponse } from "../utils/errorResponse.js";
 import { Order } from "../models/Order.js";
 import { Payment } from "../models/Payment.js";
 import { Product } from "../models/Product.js";
+import { Unit } from "../models/Unit.js";
 import { StockEntry } from "../models/StockEntry.js";
 import { AuditLog } from "../models/AuditLog.js";
 async function getNextOrderNumber(businessId) {
@@ -14,7 +15,19 @@ async function createOrder(req, res, next) {
     const { businessId, userId } = req.user;
     const { outletId, items, billingMode, discount, notes, customerName, customerPhone, payment } = req.body;
     let subtotal = 0, tax = 0;
+    // Normalize items: fill in unit from product (unitId.abbreviation or unit),
+    // and set missing price/taxRate from product if available.
     for (const item of items) {
+      if (item.productId) {
+        const product = await Product.findById(item.productId).populate({ path: "unitId", select: "name abbreviation key" }).lean();
+        if (product) {
+          // prefer unit abbreviation from Unit, fallback to product.unit string
+          item.unit = product.unitId?.abbreviation || product.unit || item.unit || "pcs";
+          // if price or taxRate not provided, default to product values
+          if (item.price === undefined || item.price === null) item.price = product.price;
+          if (item.taxRate === undefined || item.taxRate === null) item.taxRate = product.taxRate || 0;
+        }
+      }
       const lineTotal = item.price * item.qty;
       const taxTotal = lineTotal * (item.taxRate || 0);
       item.lineTotal = lineTotal;
