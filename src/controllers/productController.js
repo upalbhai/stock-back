@@ -16,7 +16,8 @@ async function listProducts(req, res, next) {
     if (search) {
       query.$or = [
         { name: { $regex: search, $options: "i" } },
-        { sku: { $regex: search, $options: "i" } }
+        { sku: { $regex: search, $options: "i" } },
+        { barcode: search }
       ];
     }
     
