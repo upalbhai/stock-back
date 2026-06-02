@@ -3,15 +3,25 @@ import {
   adminListBusinesses,
   adminToggleBusiness,
   adminUpdatePlan,
-  adminImpersonate,
-  adminStopImpersonation,
-  adminPlatformStats,
   adminApproveBusiness,
-  adminSetBusinessStatus,
+  adminSetBusinessStatus
+} from "../controllers/admin/businessController.js";
+import {
   adminApproveOutlet,
   adminSetOutletStatus,
   adminListOutlets
-} from "../controllers/adminController.js";
+} from "../controllers/admin/outletController.js";
+import {
+  adminImpersonate,
+  adminStopImpersonation
+} from "../controllers/admin/impersonationController.js";
+import {
+  adminPlatformStats
+} from "../controllers/admin/statsController.js";
+import {
+  adminCreateManualSubscription,
+  adminCancelSubscription
+} from "../controllers/admin/subscriptionController.js";
 import { requireAuth, requireSuperAdmin } from "../middlewares/auth.js";
 import { validate } from "../middlewares/validate.js";
 import { adminImpersonateSchema, adminPlanSchema, adminStatusSchema, idParamSchema } from "../validators/schemas.js";
@@ -43,6 +53,10 @@ adminRouter.patch("/businesses/:id/plan", validate(adminPlanSchema), adminUpdate
 adminRouter.patch("/outlets/:id/approve", validate(idParamSchema, "params"), adminApproveOutlet);
 adminRouter.patch("/outlets/:id/status", validate(adminStatusSchema), adminSetOutletStatus);
 adminRouter.post("/impersonate", validate(adminImpersonateSchema), adminImpersonate);
+
+// Manual subscription routes
+adminRouter.post("/subscriptions/manual", adminCreateManualSubscription);
+adminRouter.post("/subscriptions/cancel", adminCancelSubscription);
 
 export {
   adminRouter
