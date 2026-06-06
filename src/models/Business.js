@@ -37,6 +37,17 @@ const businessSchema = new Schema(
     maxStaff: { type: Number, default: 5 },
     maxProducts: { type: Number, default: 50 },
     features: { type: [String], default: [] },
+    planType: {
+      type: String,
+      enum: ["retail", "wholesale", "hybrid"],
+      default: "retail"
+    },
+    businessProfile: {
+      type: String,
+      enum: ["retail", "wholesale", "hybrid"],
+      default: "retail"
+    },
+    enabledFeatures: { type: [String], default: [] },
     settings: {
       requireCustomerName: { type: Boolean, default: false },
       enableOnlineOrders: { type: Boolean, default: false },

@@ -1,4 +1,15 @@
 import mongoose, { Schema } from "mongoose";
+const packagingUnitSchema = new Schema(
+  {
+    unitId: { type: Schema.Types.ObjectId, ref: "Unit", required: true },
+    qtyPerUnit: { type: Number, required: true, min: 1 },
+    price: { type: Number, min: 0 },
+    costPrice: { type: Number, min: 0, default: 0 },
+    isActive: { type: Boolean, default: true }
+  },
+  { _id: false }
+);
+
 const productSchema = new Schema(
   {
     businessId: { type: Schema.Types.ObjectId, ref: "Business", required: true },
@@ -18,6 +29,8 @@ const productSchema = new Schema(
     // for profit tracking
     taxRate: { type: Number, default: 0 },
     gstRate: { type: Number, default: 0 },
+    hsnCode: { type: String },
+    packagingUnits: { type: [packagingUnitSchema], default: [] },
     onHandQty: { type: Number, default: 0 },
     lowStockThreshold: { type: Number, default: 10 },
     isActive: { type: Boolean, default: true },

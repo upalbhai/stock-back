@@ -4,6 +4,7 @@ import { Business } from "../../models/Business.js";
 import { Plan } from "../../models/Plan.js";
 import { Subscription } from "../../models/Subscription.js";
 import { AuditLog } from "../../models/AuditLog.js";
+import { applyPlanToBusiness } from "../../utils/syncBusinessPlan.js";
 import mailer from "../../utils/mailer.js";
 
 async function adminCreateManualSubscription(req, res, next) {
@@ -65,15 +66,11 @@ async function adminCreateManualSubscription(req, res, next) {
       endDate: calculatedEndDate
     });
 
-    // Update Business
-    business.subscriptionStatus = "active";
-    business.planId = planId;
-    business.currentPeriodStart = startDate;
-    business.currentPeriodEnd = calculatedEndDate;
-    business.maxOutlets = plan.maxOutlets;
-    business.maxStaff = plan.maxStaff;
-    business.maxProducts = plan.maxProducts;
-    await business.save();
+    await applyPlanToBusiness(businessId, plan, {
+      subscriptionStatus: "active",
+      currentPeriodStart: startDate,
+      currentPeriodEnd: calculatedEndDate
+    });
 
     await AuditLog.create({
       businessId,

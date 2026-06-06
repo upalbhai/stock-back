@@ -4,6 +4,26 @@ import { Product } from "../models/Product.js";
 import { Unit } from "../models/Unit.js";
 import { StockEntry } from "../models/StockEntry.js";
 import { AuditLog } from "../models/AuditLog.js";
+
+async function validatePackagingUnits(businessId, packagingUnits) {
+  if (!packagingUnits?.length) return [];
+  const validated = [];
+  for (const pkg of packagingUnits) {
+    const unitDoc = await Unit.findOne({ _id: pkg.unitId, businessId, isActive: true });
+    if (!unitDoc) {
+      return { error: `Invalid packaging unitId: ${pkg.unitId}` };
+    }
+    validated.push({
+      unitId: pkg.unitId,
+      qtyPerUnit: pkg.qtyPerUnit,
+      price: pkg.price,
+      costPrice: pkg.costPrice ?? 0,
+      isActive: pkg.isActive !== false
+    });
+  }
+  return validated;
+}
+
 async function listProducts(req, res, next) {
   try {
     const { businessId } = req.user;
@@ -31,6 +51,7 @@ async function listProducts(req, res, next) {
     const products = await Product.find(query)
       .populate("categoryId", "name icon color parentId")
       .populate({ path: "unitId", select: "name abbreviation key" })
+      .populate({ path: "packagingUnits.unitId", select: "name abbreviation key" })
       .sort(sortOption)
       .skip(cursor ? 0 : (Number(page) - 1) * numLimit)
       .limit(numLimit)
@@ -69,6 +90,7 @@ async function getProduct(req, res, next) {
     const product = await Product.findOne({ _id: req.params.id, businessId })
       .populate("categoryId", "name icon color parentId")
       .populate({ path: "unitId", select: "name abbreviation key" })
+      .populate({ path: "packagingUnits.unitId", select: "name abbreviation key" })
       .lean();
     if (!product) return errorResponse({
       res: res,
@@ -102,6 +124,8 @@ async function createProduct(req, res, next) {
       costPrice,
       taxRate,
       gstRate,
+      hsnCode,
+      packagingUnits,
       onHandQty,
       lowStockThreshold,
       isFeatured,
@@ -119,6 +143,23 @@ async function createProduct(req, res, next) {
       }
     }
 
+    let validatedPackaging = [];
+    if (packagingUnits?.length) {
+      const enabled = req.enabledFeatures || [];
+      if (!enabled.includes("packaging_units") && req.user?.role !== "superadmin") {
+        return errorResponse({
+          res,
+          statusCode: 403,
+          message: "Packaging units not available on your plan"
+        });
+      }
+      const validatedPkgs = await validatePackagingUnits(businessId, packagingUnits);
+      if (validatedPkgs.error) {
+        return errorResponse({ res, statusCode: 400, message: validatedPkgs.error });
+      }
+      validatedPackaging = validatedPkgs;
+    }
+
     const product = await Product.create({
       businessId,
       outletId,
@@ -133,6 +174,8 @@ async function createProduct(req, res, next) {
       costPrice: costPrice || 0,
       taxRate: taxRate || 0,
       gstRate: gstRate || 0,
+      hsnCode: hsnCode || undefined,
+      packagingUnits: validatedPackaging,
       onHandQty: onHandQty || 0,
       lowStockThreshold: lowStockThreshold || 10,
       isFeatured: isFeatured || false,
@@ -191,6 +234,8 @@ async function updateProduct(req, res, next) {
       "costPrice",
       "taxRate",
       "gstRate",
+      "hsnCode",
+      "packagingUnits",
       "lowStockThreshold",
       "isFeatured",
       "image",
@@ -211,11 +256,29 @@ async function updateProduct(req, res, next) {
       }
     }
 
+    if (update.packagingUnits !== undefined && update.packagingUnits?.length) {
+      const enabled = req.enabledFeatures || [];
+      if (!enabled.includes("packaging_units") && req.user?.role !== "superadmin") {
+        return errorResponse({
+          res,
+          statusCode: 403,
+          message: "Packaging units not available on your plan"
+        });
+      }
+      const validatedPkgs = await validatePackagingUnits(businessId, update.packagingUnits);
+      if (validatedPkgs.error) {
+        return errorResponse({ res, statusCode: 400, message: validatedPkgs.error });
+      }
+      update.packagingUnits = validatedPkgs;
+    }
+
     const product = await Product.findOneAndUpdate(
       { _id: req.params.id, businessId },
       { $set: update },
       { new: true }
-    ).populate({ path: "unitId", select: "name abbreviation key" });
+    )
+      .populate({ path: "unitId", select: "name abbreviation key" })
+      .populate({ path: "packagingUnits.unitId", select: "name abbreviation key" });
     if (!product) return errorResponse({
       res: res,
       statusCode: 404,

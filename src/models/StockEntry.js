@@ -13,6 +13,11 @@ const stockEntrySchema = new Schema(
     // positive = in, negative = out
     qtyBefore: { type: Number, required: true },
     qtyAfter: { type: Number, required: true },
+    soldQty: { type: Number },
+    soldUnit: { type: String },
+    packagingUnitId: { type: Schema.Types.ObjectId, ref: "Unit" },
+    conversionFactor: { type: Number, min: 0 },
+    baseUnit: { type: String },
     note: { type: String },
     referenceId: { type: Schema.Types.ObjectId },
     // orderId or transferId

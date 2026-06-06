@@ -14,7 +14,10 @@ const MODULES = [
   "stock_transfers",
   "audit_logs",
   "categories",
-  "products"
+  "products",
+  "units",
+  "customers",
+  "invoices"
 ];
 const ACTIONS = [
   "create",
@@ -24,7 +27,9 @@ const ACTIONS = [
   "refund",
   "print",
   "export",
-  "approve"
+  "approve",
+  "void",
+  "collect"
 ];
 const permissionSchema = new Schema(
   {

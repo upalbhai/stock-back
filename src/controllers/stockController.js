@@ -38,24 +38,91 @@ async function getStockAlerts(req, res, next) {
     return next(error);
   }
 }
+async function buildStockHistoryQuery(businessId, params) {
+  const { productId, outletId, type, direction, search, startDate, endDate } = params;
+  const query = { businessId };
+  if (productId) query.productId = productId;
+  if (outletId) query.outletId = outletId;
+  if (type) query.type = type;
+  if (direction === "in") query.qty = { $gt: 0 };
+  if (direction === "out") query.qty = { $lt: 0 };
+
+  if (startDate || endDate) {
+    query.createdAt = {};
+    if (startDate) {
+      const start = new Date(startDate);
+      start.setHours(0, 0, 0, 0);
+      query.createdAt.$gte = start;
+    }
+    if (endDate) {
+      const end = new Date(endDate);
+      end.setHours(23, 59, 59, 999);
+      query.createdAt.$lte = end;
+    }
+  }
+
+  const term = String(search || "").trim();
+  if (term) {
+    const products = await Product.find({
+      businessId,
+      $or: [
+        { name: { $regex: term, $options: "i" } },
+        { sku: { $regex: term, $options: "i" } }
+      ]
+    }).select("_id").lean();
+    const productIds = products.map((p) => p._id);
+    const orConditions = [{ note: { $regex: term, $options: "i" } }];
+    if (productIds.length) orConditions.unshift({ productId: { $in: productIds } });
+    query.$or = orConditions;
+  }
+
+  return query;
+}
+
 async function getStockHistory(req, res, next) {
   try {
     const { businessId } = req.user;
-    const { productId, outletId, page = 1, limit = 50 } = req.query;
-    const query = { businessId };
-    if (productId) query.productId = productId;
-    if (outletId) query.outletId = outletId;
+    const { page = 1, limit = 50, ...filterParams } = req.query;
+    const query = await buildStockHistoryQuery(businessId, filterParams);
     const skip = (Number(page) - 1) * Number(limit);
-    const [entries, total] = await Promise.all([
-      StockEntry.find(query).sort({ createdAt: -1 }).skip(skip).limit(Number(limit)).populate("productId", "name unit").populate("createdBy", "name").lean(),
-      StockEntry.countDocuments(query)
+
+    const [entries, total, summaryAgg] = await Promise.all([
+      StockEntry.find(query)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(Number(limit))
+        .populate("productId", "name unit")
+        .populate("packagingUnitId", "name abbreviation")
+        .populate("createdBy", "name")
+        .lean(),
+      StockEntry.countDocuments(query),
+      StockEntry.aggregate([
+        { $match: query },
+        {
+          $group: {
+            _id: null,
+            totalInQty: { $sum: { $cond: [{ $gt: ["$qty", 0] }, "$qty", 0] } },
+            totalOutQty: { $sum: { $cond: [{ $lt: ["$qty", 0] }, { $abs: "$qty" }, 0] } },
+            entriesIn: { $sum: { $cond: [{ $gt: ["$qty", 0] }, 1, 0] } },
+            entriesOut: { $sum: { $cond: [{ $lt: ["$qty", 0] }, 1, 0] } }
+          }
+        }
+      ])
     ]);
+
+    const summary = summaryAgg[0] || {
+      totalInQty: 0,
+      totalOutQty: 0,
+      entriesIn: 0,
+      entriesOut: 0
+    };
+
     return successResponse({
       res: res,
-
       data: {
         entries,
-        total
+        total,
+        summary
       }
     });
   } catch (error) {
@@ -65,7 +132,18 @@ async function getStockHistory(req, res, next) {
 async function adjustStock(req, res, next) {
   try {
     const { businessId, userId } = req.user;
-    const { productId, outletId, qty, type, note } = req.body;
+    const {
+      productId,
+      outletId,
+      qty,
+      type,
+      note,
+      soldQty,
+      soldUnit,
+      packagingUnitId,
+      conversionFactor,
+      baseUnit
+    } = req.body;
     const product = await Product.findOne({ _id: productId, businessId });
     if (!product) return errorResponse({
       res: res,
@@ -73,18 +151,27 @@ async function adjustStock(req, res, next) {
       message: "Product not found"
     });
     const qtyBefore = product.onHandQty;
-    const qtyAfter = type === "adjustment" ? qty : qtyBefore + qty;
+    const entryType = type || "adjustment";
+    const qtyAfter = entryType === "adjustment" ? qty : qtyBefore + qty;
     await Product.findByIdAndUpdate(productId, { onHandQty: qtyAfter });
+    const packagingMeta = {};
+    if (soldQty != null) packagingMeta.soldQty = soldQty;
+    if (soldUnit) packagingMeta.soldUnit = soldUnit;
+    if (packagingUnitId) packagingMeta.packagingUnitId = packagingUnitId;
+    if (conversionFactor != null) packagingMeta.conversionFactor = conversionFactor;
+    if (baseUnit) packagingMeta.baseUnit = baseUnit;
+
     await StockEntry.create({
       businessId,
       outletId,
       productId,
-      type: type || "adjustment",
+      type: entryType,
       qty: qtyAfter - qtyBefore,
       qtyBefore,
       qtyAfter,
       note,
-      createdBy: userId
+      createdBy: userId,
+      ...packagingMeta
     });
     await AuditLog.create({
       businessId,

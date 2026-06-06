@@ -20,9 +20,13 @@ import { auditRouter } from "./routes/audit-logs.js";
 import { adminRouter } from "./routes/admin.js";
 import { planRouter } from "./routes/plans.js";
 import { paymentRouter } from "./routes/payments.js";
+import { featureRouter } from "./routes/features.js";
+import { customerRouter } from "./routes/customers.js";
+import { invoiceRouter } from "./routes/invoices.js";
 import { errorHandler } from "./middlewares/error.js";
 import { requireActiveSubscription } from "./middlewares/subscription.js";
 import { requireAuth } from "./middlewares/auth.js";
+import { loadBusinessContext } from "./middlewares/feature.js";
 function isAllowedOrigin(origin) {
   if (!origin) return true;
   if (corsOrigins.includes(origin)) return true;
@@ -55,20 +59,25 @@ function createApp() {
   app.use("/api/admin", adminRouter);
   app.use("/api/plans", planRouter);
   app.use("/api/payments", paymentRouter);
+  app.use("/api/features", featureRouter);
+
+  const withSub = [requireAuth, requireActiveSubscription, loadBusinessContext];
   
   // Subscription-protected routes
-  app.use("/api/businesses", requireAuth, requireActiveSubscription, businessRouter);
-  app.use("/api/outlets", requireAuth, requireActiveSubscription, outletRouter);
-  app.use("/api/categories", requireAuth, requireActiveSubscription, categoryRouter);
-  app.use("/api/units", requireAuth, requireActiveSubscription, unitRouter);
-  app.use("/api/products", requireAuth, requireActiveSubscription, productRouter);
-  app.use("/api/stock", requireAuth, requireActiveSubscription, stockRouter);
-  app.use("/api/orders", requireAuth, requireActiveSubscription, orderRouter);
-  app.use("/api/reports", requireAuth, requireActiveSubscription, reportRouter);
-  app.use("/api/expenses", requireAuth, requireActiveSubscription, expenseRouter);
-  app.use("/api/users", requireAuth, requireActiveSubscription, userRouter);
-  app.use("/api/roles", requireAuth, requireActiveSubscription, roleRouter);
-  app.use("/api/audit-logs", requireAuth, requireActiveSubscription, auditRouter);
+  app.use("/api/businesses", ...withSub, businessRouter);
+  app.use("/api/outlets", ...withSub, outletRouter);
+  app.use("/api/categories", ...withSub, categoryRouter);
+  app.use("/api/units", ...withSub, unitRouter);
+  app.use("/api/products", ...withSub, productRouter);
+  app.use("/api/stock", ...withSub, stockRouter);
+  app.use("/api/orders", ...withSub, orderRouter);
+  app.use("/api/customers", ...withSub, customerRouter);
+  app.use("/api/invoices", ...withSub, invoiceRouter);
+  app.use("/api/reports", ...withSub, reportRouter);
+  app.use("/api/expenses", ...withSub, expenseRouter);
+  app.use("/api/users", ...withSub, userRouter);
+  app.use("/api/roles", ...withSub, roleRouter);
+  app.use("/api/audit-logs", ...withSub, auditRouter);
   
   app.use(errorHandler);
   return app;

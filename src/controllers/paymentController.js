@@ -7,6 +7,7 @@ import { Plan } from "../models/Plan.js";
 import { Business } from "../models/Business.js";
 import { Subscription } from "../models/Subscription.js";
 import { AuditLog } from "../models/AuditLog.js";
+import { applyPlanToBusiness } from "../utils/syncBusinessPlan.js";
 import mailer from "../utils/mailer.js";
 
 function getRazorpayInstance() {
@@ -132,15 +133,12 @@ async function verifyPayment(req, res, next) {
     });
     
     // Update Business
-    const business = await Business.findByIdAndUpdate(businessId, {
+    await applyPlanToBusiness(businessId, plan, {
       subscriptionStatus: "active",
-      planId,
       currentPeriodStart: startDate,
-      currentPeriodEnd: endDate,
-      maxOutlets: plan.maxOutlets,
-      maxStaff: plan.maxStaff,
-      maxProducts: plan.maxProducts
-    }, { new: true }).populate("ownerId", "email name");
+      currentPeriodEnd: endDate
+    });
+    const business = await Business.findById(businessId).populate("ownerId", "email name");
     
     await AuditLog.create({
       businessId,

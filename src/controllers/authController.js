@@ -7,6 +7,9 @@ import { v4 as uuidv4 } from "uuid";
 import { env } from "../config/env.js";
 import { User } from "../models/User.js";
 import { Business } from "../models/Business.js";
+import { PLAN_FEATURE_TEMPLATES } from "../config/features.js";
+import { getBusinessContextFromDoc } from "../utils/syncBusinessPlan.js";
+import { Plan } from "../models/Plan.js";
 import { Outlet } from "../models/Outlet.js";
 import { Role } from "../models/Role.js";
 import { AuditLog } from "../models/AuditLog.js";
@@ -24,6 +27,50 @@ function slugify(str) {
 function makeOutletCode(name) {
   return slugify(name).slice(0, 12) || "outlet";
 }
+
+async function buildAuthUserResponse(user, subscriptionOverrides = {}) {
+  const primaryOutletId = user.outletIds?.[0]?.toString() || undefined;
+  let subscriptionStatus = subscriptionOverrides.subscriptionStatus ?? null;
+  let trialEndsAt = subscriptionOverrides.trialEndsAt ?? null;
+  let trialExpired = subscriptionOverrides.trialExpired ?? false;
+  let enabledFeatures = null;
+  let businessProfile = null;
+  let planType = null;
+
+  if (user.businessId && user.role !== "superadmin") {
+    const biz = await Business.findById(user.businessId)
+      .select("subscriptionStatus trialEndsAt planId planType businessProfile enabledFeatures")
+      .lean();
+    if (biz) {
+      if (subscriptionStatus === null) subscriptionStatus = biz.subscriptionStatus;
+      if (trialEndsAt === null) trialEndsAt = biz.trialEndsAt;
+      let plan = null;
+      if (biz.planId) {
+        plan = await Plan.findById(biz.planId).select("planType featureKeys").lean();
+      }
+      const ctx = getBusinessContextFromDoc(biz, plan);
+      enabledFeatures = ctx.enabledFeatures;
+      businessProfile = ctx.businessProfile;
+      planType = ctx.planType;
+    }
+  }
+
+  return {
+    id: user._id,
+    name: user.name,
+    role: user.role,
+    businessId: user.businessId,
+    outletId: primaryOutletId,
+    outletIds: user.outletIds?.map((id) => id.toString()) || [],
+    subscriptionStatus,
+    trialEndsAt,
+    trialExpired,
+    enabledFeatures,
+    businessProfile,
+    planType
+  };
+}
+
 function createToken(payload) {
   return jwt.sign(payload, env.JWT_SECRET, { expiresIn: "7d" });
 }
@@ -143,6 +190,9 @@ async function register(req, res, next) {
         slug: bCode,
         ownerId: userId,
         plan: "free",
+        planType: "retail",
+        businessProfile: "retail",
+        enabledFeatures: PLAN_FEATURE_TEMPLATES.hybrid,
         maxOutlets: 1,
         maxStaff: 5,
         maxProducts: 50,
@@ -323,18 +373,7 @@ async function loginWithEmail(req, res, next) {
 
       data: {
         token,
-
-        user: {
-          id: user._id,
-          name: user.name,
-          role: user.role,
-          businessId: user.businessId,
-          outletId: primaryOutletId,
-          outletIds: user.outletIds?.map((id) => id.toString()) || [],
-          subscriptionStatus,
-          trialEndsAt,
-          trialExpired
-        }
+        user: await buildAuthUserResponse(user, { subscriptionStatus, trialEndsAt, trialExpired })
       }
     });
   } catch (error) {
@@ -419,18 +458,7 @@ async function login(req, res, next) {
 
       data: {
         token,
-
-        user: {
-          id: user._id,
-          name: user.name,
-          role: user.role,
-          businessId: user.businessId,
-          outletId: primaryOutletId,
-          outletIds: user.outletIds?.map((id) => id.toString()) || [],
-          subscriptionStatus,
-          trialEndsAt,
-          trialExpired
-        }
+        user: await buildAuthUserResponse(user, { subscriptionStatus, trialEndsAt, trialExpired })
       }
     });
   } catch (error) {
@@ -450,22 +478,19 @@ async function getMe(req, res, next) {
       });
     }
 
-    // Include subscription info
-    let subscriptionStatus = null;
-    let trialEndsAt = null;
-    if (user.businessId) {
-      const biz = await Business.findById(user.businessId).select("subscriptionStatus trialEndsAt currentPeriodEnd planId").lean();
-      if (biz) {
-        subscriptionStatus = biz.subscriptionStatus;
-        trialEndsAt = biz.trialEndsAt;
-      }
-    }
+    // Include subscription + plan features
+    const authUser = await buildAuthUserResponse(user);
 
     return successResponse({
       res: res,
 
       data: {
-        user: { ...user, subscriptionStatus, trialEndsAt }
+        user: {
+          ...user,
+          id: user._id,
+          ...authUser,
+          roleId: user.roleId
+        }
       }
     });
   } catch (error) {
@@ -659,18 +684,7 @@ async function verifyLoginOtp(req, res, next) {
 
       data: {
         token,
-
-        user: {
-          id: user._id,
-          name: user.name,
-          role: user.role,
-          businessId: user.businessId,
-          outletId: primaryOutletId,
-          outletIds: user.outletIds?.map((id) => id.toString()) || [],
-          subscriptionStatus,
-          trialEndsAt,
-          trialExpired
-        }
+        user: await buildAuthUserResponse(user, { subscriptionStatus, trialEndsAt, trialExpired })
       }
     });
   } catch (error) {
@@ -752,11 +766,13 @@ async function createDefaultRoles(businessId) {
       description: "Full access to outlet operations",
       isSystem: true,
       permissions: [
-        { module: "billing", actions: ["create", "read", "update", "refund", "print"] },
+        { module: "billing", actions: ["create", "read", "update", "refund", "void", "print"] },
         { module: "inventory", actions: ["create", "read", "update"] },
         { module: "products", actions: ["create", "read", "update"] },
         { module: "reports", actions: ["read", "export"] },
-        { module: "expenses", actions: ["create", "read"] },
+        { module: "expenses", actions: ["create", "read", "void"] },
+        { module: "customers", actions: ["create", "read", "update", "collect"] },
+        { module: "invoices", actions: ["create", "read", "print"] },
         { module: "dashboard", actions: ["read"] },
         { module: "categories", actions: ["read"] }
       ]

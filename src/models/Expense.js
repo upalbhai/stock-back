@@ -12,7 +12,15 @@ const expenseSchema = new Schema(
     note: { type: String },
     date: { type: Date, required: true, default: () => /* @__PURE__ */ new Date() },
     receiptUrl: { type: String },
-    createdBy: { type: Schema.Types.ObjectId, ref: "User" }
+    createdBy: { type: Schema.Types.ObjectId, ref: "User" },
+    status: {
+      type: String,
+      enum: ["active", "voided"],
+      default: "active"
+    },
+    voidedAt: { type: Date },
+    voidedBy: { type: Schema.Types.ObjectId, ref: "User" },
+    voidReason: { type: String }
   },
   { timestamps: true }
 );

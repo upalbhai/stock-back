@@ -6,6 +6,7 @@ import { Business } from "./models/Business.js";
 import { Outlet } from "./models/Outlet.js";
 import { Role } from "./models/Role.js";
 import { createDefaultRoles } from "./controllers/authController.js";
+import { seedPlansAndFeatures } from "./utils/seedPlans.js";
 
 dotenv.config();
 
@@ -107,6 +108,9 @@ async function seed() {
       isActive: true,
       emailVerified: true,
     });
+
+    console.log("\nSeeding plans & features...");
+    await seedPlansAndFeatures();
 
     console.log("\nDatabase seeded successfully!");
     console.log("--------------------------------------");

@@ -11,6 +11,12 @@ const planSchema = new Schema(
     maxStaff: { type: Number, default: 5 },
     maxProducts: { type: Number, default: 50 },
     features: { type: [String], default: [] },
+    planType: {
+      type: String,
+      enum: ["retail", "wholesale", "hybrid"],
+      default: "retail"
+    },
+    featureKeys: { type: [String], default: [] },
     isActive: { type: Boolean, default: true },
     isPopular: { type: Boolean, default: false },
     sortOrder: { type: Number, default: 0 },

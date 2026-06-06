@@ -10,7 +10,11 @@ const STANDARD_UNITS = [
   { name: "Gram", abbreviation: "g", sortOrder: 1 },
   { name: "Litre", abbreviation: "L", sortOrder: 2 },
   { name: "Packet", abbreviation: "pkt", sortOrder: 3 },
-  { name: "Piece", abbreviation: "pc", sortOrder: 4 }
+  { name: "Piece", abbreviation: "pc", sortOrder: 4 },
+  { name: "Peti", abbreviation: "peti", sortOrder: 5 },
+  { name: "Crate", abbreviation: "crate", sortOrder: 6 },
+  { name: "Dozen", abbreviation: "dz", sortOrder: 7 },
+  { name: "Box", abbreviation: "box", sortOrder: 8 }
 ];
 
 export async function seedStandardUnits(businessId) {

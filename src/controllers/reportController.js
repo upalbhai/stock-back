@@ -2,6 +2,7 @@ import { successResponse } from "../utils/successResponse.js";
 import { errorResponse } from "../utils/errorResponse.js";
 import { Order } from "../models/Order.js";
 import { Outlet } from "../models/Outlet.js";
+import { Customer } from "../models/Customer.js";
 function todayRange() {
   const start = /* @__PURE__ */ new Date();
   start.setHours(0, 0, 0, 0);
@@ -57,9 +58,32 @@ async function getDailyReport(req, res, next) {
     const bestSelling = Object.values(productSales).sort((a, b) => b.qty - a.qty).slice(0, 10);
     const staffSales = Object.values(staffSalesMap).sort((a, b) => b.revenue - a.revenue);
 
+    const gstCollected = orders.reduce((s, o) => s + (o.tax || 0), 0);
+    const wholesaleSales = orders
+      .filter((o) => o.billingMode === "wholesale")
+      .reduce((s, o) => s + o.total, 0);
+    const creditIssued = orders.reduce((s, o) => s + (o.amountDue || 0), 0);
+    const invoicesGenerated = orders.filter((o) => o.invoiceNumber).length;
+    const igstCollected = orders.reduce((s, o) => s + (o.igst || 0), 0);
+    const cgstCollected = orders.reduce((s, o) => s + (o.cgst || 0), 0);
+    const sgstCollected = orders.reduce((s, o) => s + (o.sgst || 0), 0);
+
     return successResponse({
       res: res,
-      data: { totalSales, totalOrders, paymentSummary, bestSelling, staffSales }
+      data: {
+        totalSales,
+        totalOrders,
+        paymentSummary,
+        bestSelling,
+        staffSales,
+        gstCollected,
+        wholesaleSales,
+        creditIssued,
+        invoicesGenerated,
+        igstCollected,
+        cgstCollected,
+        sgstCollected
+      }
     });
   } catch (error) {
     return next(error);
@@ -122,8 +146,68 @@ async function getRevenueTrend(req, res, next) {
     return next(error);
   }
 }
+
+async function getWholesaleSummary(req, res, next) {
+  try {
+    const { businessId } = req.user;
+    const { outletId } = req.query;
+    const { start, end } = todayRange();
+
+    const customerMatch = { businessId, isActive: true };
+    const creditAgg = await Customer.aggregate([
+      { $match: customerMatch },
+      { $group: { _id: null, total: { $sum: "$outstandingBalance" }, count: { $sum: 1 } } }
+    ]);
+    const customersWithDue = await Customer.countDocuments({
+      ...customerMatch,
+      outstandingBalance: { $gt: 0 }
+    });
+
+    const orderQuery = {
+      businessId,
+      status: "completed",
+      createdAt: { $gte: start, $lte: end }
+    };
+    if (outletId) orderQuery.outletId = outletId;
+
+    const orders = await Order.find(orderQuery)
+      .select("total tax billingMode amountDue invoiceNumber igst cgst sgst supplyType")
+      .lean();
+
+    const totalSalesToday = orders.reduce((s, o) => s + o.total, 0);
+    const gstCollectedToday = orders.reduce((s, o) => s + (o.tax || 0), 0);
+    const wholesaleSalesToday = orders
+      .filter((o) => o.billingMode === "wholesale")
+      .reduce((s, o) => s + o.total, 0);
+    const creditIssuedToday = orders.reduce((s, o) => s + (o.amountDue || 0), 0);
+    const invoicesToday = orders.filter((o) => o.invoiceNumber).length;
+    const igstToday = orders.reduce((s, o) => s + (o.igst || 0), 0);
+    const cgstSgstToday = orders.reduce((s, o) => s + (o.cgst || 0) + (o.sgst || 0), 0);
+
+    return successResponse({
+      res,
+      data: {
+        totalCreditOutstanding: creditAgg[0]?.total || 0,
+        customersWithDue,
+        totalCustomers: creditAgg[0]?.count || 0,
+        totalSalesToday,
+        totalOrdersToday: orders.length,
+        gstCollectedToday,
+        wholesaleSalesToday,
+        creditIssuedToday,
+        invoicesToday,
+        igstToday,
+        cgstSgstToday
+      }
+    });
+  } catch (error) {
+    return next(error);
+  }
+}
+
 export {
   getDailyReport,
   getOutletComparison,
-  getRevenueTrend
+  getRevenueTrend,
+  getWholesaleSummary
 };

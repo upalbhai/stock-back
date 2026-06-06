@@ -6,7 +6,7 @@ const paymentSchema = new Schema(
     orderId: { type: Schema.Types.ObjectId, ref: "Order", required: true },
     method: {
       type: String,
-      enum: ["cash", "upi", "card", "wallet", "split"],
+      enum: ["cash", "upi", "card", "wallet", "split", "credit"],
       required: true
     },
     amount: { type: Number, required: true, min: 0 },
