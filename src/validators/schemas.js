@@ -299,7 +299,11 @@ export const stockAdjustSchema = z.object({
   soldUnit: z.string().trim().optional(),
   packagingUnitId: z.string().trim().optional(),
   conversionFactor: z.number().positive().optional(),
-  baseUnit: z.string().trim().optional()
+  baseUnit: z.string().trim().optional(),
+  soldUnitCost: z.number().min(0).optional(),
+  soldUnitPrice: z.number().min(0).optional(),
+  updateProductPrices: z.boolean().optional(),
+  lossReason: z.enum(["spoilage", "expiry", "damage", "customer_return_spoiled", "owner_replacement", "other"]).optional()
 }).passthrough();
 
 export const stockTransferSchema = z.object({

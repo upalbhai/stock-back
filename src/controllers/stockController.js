@@ -4,6 +4,7 @@ import { Product } from "../models/Product.js";
 import { StockEntry } from "../models/StockEntry.js";
 import { StockTransfer } from "../models/StockTransfer.js";
 import { AuditLog } from "../models/AuditLog.js";
+import { resolveUnitCost, resolveUnitSellPrice, getMovementCount } from "../utils/stockCostUtils.js";
 async function getStockSummary(req, res, next) {
   try {
     const { businessId } = req.user;
@@ -104,7 +105,10 @@ async function getStockHistory(req, res, next) {
             totalInQty: { $sum: { $cond: [{ $gt: ["$qty", 0] }, "$qty", 0] } },
             totalOutQty: { $sum: { $cond: [{ $lt: ["$qty", 0] }, { $abs: "$qty" }, 0] } },
             entriesIn: { $sum: { $cond: [{ $gt: ["$qty", 0] }, 1, 0] } },
-            entriesOut: { $sum: { $cond: [{ $lt: ["$qty", 0] }, 1, 0] } }
+            entriesOut: { $sum: { $cond: [{ $lt: ["$qty", 0] }, 1, 0] } },
+            totalCostValue: { $sum: { $cond: [{ $gt: ["$qty", 0] }, { $ifNull: ["$costValue", 0] }, 0] } },
+            totalSellValue: { $sum: { $cond: [{ $gt: ["$qty", 0] }, { $ifNull: ["$sellValue", 0] }, 0] } },
+            totalExpectedProfit: { $sum: { $cond: [{ $gt: ["$qty", 0] }, { $ifNull: ["$expectedProfit", 0] }, 0] } }
           }
         }
       ])
@@ -114,7 +118,10 @@ async function getStockHistory(req, res, next) {
       totalInQty: 0,
       totalOutQty: 0,
       entriesIn: 0,
-      entriesOut: 0
+      entriesOut: 0,
+      totalCostValue: 0,
+      totalSellValue: 0,
+      totalExpectedProfit: 0
     };
 
     return successResponse({
@@ -129,6 +136,33 @@ async function getStockHistory(req, res, next) {
     return next(error);
   }
 }
+async function applyProductPriceUpdate(product, { soldUnitCost, soldUnitPrice, packagingUnitId }) {
+  if (soldUnitCost == null && soldUnitPrice == null) return;
+
+  if (!packagingUnitId) {
+    const update = {};
+    if (soldUnitPrice != null) update.price = soldUnitPrice;
+    if (soldUnitCost != null) update.costPrice = soldUnitCost;
+    if (Object.keys(update).length) {
+      await Product.findByIdAndUpdate(product._id, update);
+    }
+    return;
+  }
+
+  const pkgId = packagingUnitId.toString();
+  const packagingUnits = (product.packagingUnits || []).map((pkg) => {
+    const plain = pkg.toObject?.() ?? pkg;
+    const id = plain.unitId?.toString?.() || String(plain.unitId);
+    if (id !== pkgId) return plain;
+    return {
+      ...plain,
+      ...(soldUnitPrice != null ? { price: soldUnitPrice } : {}),
+      ...(soldUnitCost != null ? { costPrice: soldUnitCost } : {})
+    };
+  });
+  await Product.findByIdAndUpdate(product._id, { packagingUnits });
+}
+
 async function adjustStock(req, res, next) {
   try {
     const { businessId, userId } = req.user;
@@ -142,7 +176,11 @@ async function adjustStock(req, res, next) {
       soldUnit,
       packagingUnitId,
       conversionFactor,
-      baseUnit
+      baseUnit,
+      soldUnitCost,
+      soldUnitPrice,
+      updateProductPrices,
+      lossReason
     } = req.body;
     const product = await Product.findOne({ _id: productId, businessId });
     if (!product) return errorResponse({
@@ -152,8 +190,9 @@ async function adjustStock(req, res, next) {
     });
     const qtyBefore = product.onHandQty;
     const entryType = type || "adjustment";
+    const qtyDelta = entryType === "adjustment" ? qty - qtyBefore : qty;
     const qtyAfter = entryType === "adjustment" ? qty : qtyBefore + qty;
-    await Product.findByIdAndUpdate(productId, { onHandQty: qtyAfter });
+
     const packagingMeta = {};
     if (soldQty != null) packagingMeta.soldQty = soldQty;
     if (soldUnit) packagingMeta.soldUnit = soldUnit;
@@ -161,17 +200,52 @@ async function adjustStock(req, res, next) {
     if (conversionFactor != null) packagingMeta.conversionFactor = conversionFactor;
     if (baseUnit) packagingMeta.baseUnit = baseUnit;
 
+    const priceMeta = {};
+    const isStockIn = qtyDelta > 0 && ["purchase", "opening", "transfer_in", "return"].includes(entryType);
+    const isLossOut = qtyDelta < 0 && (entryType === "wastage" || lossReason);
+
+    if (isStockIn && (soldUnitCost != null || soldUnitPrice != null)) {
+      const count = soldQty != null ? soldQty : Math.abs(qtyDelta);
+      const cost = soldUnitCost ?? resolveUnitCost(product, packagingUnitId);
+      const sell = soldUnitPrice ?? resolveUnitSellPrice(product, packagingUnitId);
+      priceMeta.soldUnitCost = cost;
+      priceMeta.soldUnitPrice = sell;
+      priceMeta.costValue = count * cost;
+      priceMeta.sellValue = count * sell;
+      priceMeta.expectedProfit = priceMeta.sellValue - priceMeta.costValue;
+    }
+
+    if (isLossOut) {
+      const count = getMovementCount({ soldQty, qty: qtyDelta });
+      const unitCost = soldUnitCost ?? resolveUnitCost(product, packagingUnitId);
+      priceMeta.soldUnitCost = unitCost;
+      priceMeta.costLoss = count * unitCost;
+      if (lossReason) priceMeta.lossReason = lossReason;
+      else if (entryType === "wastage") priceMeta.lossReason = "spoilage";
+    }
+
+    await Product.findByIdAndUpdate(productId, { onHandQty: qtyAfter });
+
+    if (updateProductPrices && isStockIn) {
+      await applyProductPriceUpdate(product, {
+        soldUnitCost: soldUnitCost ?? undefined,
+        soldUnitPrice: soldUnitPrice ?? undefined,
+        packagingUnitId
+      });
+    }
+
     await StockEntry.create({
       businessId,
       outletId,
       productId,
       type: entryType,
-      qty: qtyAfter - qtyBefore,
+      qty: qtyDelta,
       qtyBefore,
       qtyAfter,
       note,
       createdBy: userId,
-      ...packagingMeta
+      ...packagingMeta,
+      ...priceMeta
     });
     await AuditLog.create({
       businessId,

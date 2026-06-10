@@ -18,6 +18,19 @@ const stockEntrySchema = new Schema(
     packagingUnitId: { type: Schema.Types.ObjectId, ref: "Unit" },
     conversionFactor: { type: Number, min: 0 },
     baseUnit: { type: String },
+    soldUnitCost: { type: Number, min: 0 },
+    soldUnitPrice: { type: Number, min: 0 },
+    costValue: { type: Number, min: 0 },
+    sellValue: { type: Number, min: 0 },
+    expectedProfit: { type: Number },
+    lossReason: {
+      type: String,
+      enum: ["spoilage", "expiry", "damage", "customer_return_spoiled", "owner_replacement", "other"]
+    },
+    costLoss: { type: Number, min: 0 },
+    realizedRevenue: { type: Number, min: 0 },
+    realizedCost: { type: Number, min: 0 },
+    realizedProfit: { type: Number },
     note: { type: String },
     referenceId: { type: Schema.Types.ObjectId },
     // orderId or transferId

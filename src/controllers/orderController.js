@@ -11,6 +11,7 @@ import { Customer } from "../models/Customer.js";
 import { Business } from "../models/Business.js";
 import { applyCustomerDebit, reverseOrderCustomerLedger } from "../utils/customerLedger.js";
 import { getNextInvoiceNumber } from "../utils/invoiceNumber.js";
+import { getOrderLineCost } from "../utils/stockCostUtils.js";
 
 async function getNextOrderNumber(businessId) {
   const count = await Order.countDocuments({ businessId });
@@ -301,6 +302,8 @@ async function createOrder(req, res, next) {
         if (product) {
           const qtyBefore = product.onHandQty;
           const qtyAfter = qtyBefore - stockQty;
+          const lineRevenue = item.lineTotal ?? 0;
+          const lineCost = getOrderLineCost(product, item);
           await Product.findByIdAndUpdate(item.productId, { $inc: { onHandQty: -stockQty } });
           await StockEntry.create({
             businessId,
@@ -318,7 +321,10 @@ async function createOrder(req, res, next) {
             note: `Order ${orderNumber}${item.soldUnit ? ` (${item.soldQty} ${item.soldUnit})` : ""}`,
             referenceId: order._id,
             referenceType: "Order",
-            createdBy: userId
+            createdBy: userId,
+            realizedRevenue: lineRevenue,
+            realizedCost: lineCost,
+            realizedProfit: lineRevenue - lineCost
           });
         }
       }
