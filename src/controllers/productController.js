@@ -4,6 +4,7 @@ import { Product } from "../models/Product.js";
 import { Unit } from "../models/Unit.js";
 import { StockEntry } from "../models/StockEntry.js";
 import { AuditLog } from "../models/AuditLog.js";
+import { assertCanAddProduct } from "../utils/planLimits.js";
 
 async function validatePackagingUnits(businessId, packagingUnits) {
   if (!packagingUnits?.length) return [];
@@ -110,6 +111,9 @@ async function getProduct(req, res, next) {
 }
 async function createProduct(req, res, next) {
   try {
+    const canAdd = await assertCanAddProduct(req, res);
+    if (!canAdd) return;
+
     const { businessId } = req.user;
     const {
       outletId,

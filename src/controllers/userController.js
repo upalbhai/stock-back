@@ -11,6 +11,7 @@ import { Role } from "../models/Role.js";
 import { AuditLog } from "../models/AuditLog.js";
 import { canAssignPermissions } from "../utils/permissions.js";
 import mailer from "../utils/mailer.js";
+import { assertCanAddStaff } from "../utils/planLimits.js";
 
 async function listUsers(req, res, next) {
   try {
@@ -70,6 +71,9 @@ async function getUser(req, res, next) {
 
 async function createUser(req, res, next) {
   try {
+    const canAdd = await assertCanAddStaff(req, res);
+    if (!canAdd) return;
+
     const { businessId } = req.user;
     const { name, phone, email, pin, role, roleId, outletIds } = req.body;
 

@@ -3,6 +3,7 @@ import { errorResponse } from "../utils/errorResponse.js";
 import { Outlet } from "../models/Outlet.js";
 import { Business } from "../models/Business.js";
 import { AuditLog } from "../models/AuditLog.js";
+import { assertCanAddOutlet } from "../utils/planLimits.js";
 function makeCode(name) {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 16) + "-" + Math.random().toString(36).slice(2, 6);
 }
@@ -27,6 +28,9 @@ async function listOutlets(req, res, next) {
 }
 async function createOutlet(req, res, next) {
   try {
+    const canAdd = await assertCanAddOutlet(req, res);
+    if (!canAdd) return;
+
     const { businessId } = req.user;
     const { name, address, phone, email, taxEnabled, defaultTaxRate, billingModes, settings } = req.body;
     // determine if this outlet should be active immediately or await admin approval

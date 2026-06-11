@@ -2,6 +2,7 @@ import { successResponse } from "../utils/successResponse.js";
 import { errorResponse } from "../utils/errorResponse.js";
 import { Plan } from "../models/Plan.js";
 import { AuditLog } from "../models/AuditLog.js";
+import { normalizePlanPayload } from "../utils/normalizePlanPayload.js";
 
 function makeSlug(str) {
   return str.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
@@ -41,7 +42,8 @@ async function createPlan(req, res, next) {
   try {
     const { name, ...rest } = req.body;
     const slug = makeSlug(name);
-    
+    const payload = normalizePlanPayload(rest);
+
     const existing = await Plan.findOne({ slug });
     if (existing) {
       return errorResponse({
@@ -51,7 +53,7 @@ async function createPlan(req, res, next) {
       });
     }
     
-    const plan = await Plan.create({ name, slug, ...rest });
+    const plan = await Plan.create({ name, slug, ...payload });
     
     await AuditLog.create({
       actorId: req.user?.userId,
@@ -76,7 +78,11 @@ async function createPlan(req, res, next) {
 
 async function updatePlan(req, res, next) {
   try {
-    const plan = await Plan.findByIdAndUpdate(req.params.id, { $set: req.body }, { new: true });
+    const plan = await Plan.findByIdAndUpdate(
+      req.params.id,
+      { $set: normalizePlanPayload(req.body) },
+      { new: true }
+    );
     if (!plan) return errorResponse({
       res: res,
       statusCode: 404,

@@ -4,6 +4,8 @@ import { Business } from "../../models/Business.js";
 import { User } from "../../models/User.js";
 import { AuditLog } from "../../models/AuditLog.js";
 import { createDefaultRoles } from "../authController.js";
+import { Plan } from "../../models/Plan.js";
+import { applyPlanToBusiness } from "../../utils/syncBusinessPlan.js";
 
 async function adminListBusinesses(req, res, next) {
   try {
@@ -65,39 +67,60 @@ async function adminToggleBusiness(req, res, next) {
 async function adminUpdatePlan(req, res, next) {
   try {
     const { planId, maxOutlets, subscriptionStatus, currentPeriodEnd } = req.body;
-    
-    const updateFields = {};
-    if (planId !== undefined) updateFields.planId = planId;
-    if (maxOutlets !== undefined) updateFields.maxOutlets = maxOutlets;
-    if (subscriptionStatus !== undefined) updateFields.subscriptionStatus = subscriptionStatus;
-    if (currentPeriodEnd !== undefined) updateFields.currentPeriodEnd = currentPeriodEnd;
 
-    const business = await Business.findByIdAndUpdate(
-      req.params.id,
-      { $set: updateFields },
-      { new: true }
-    );
+    const business = await Business.findById(req.params.id);
     if (!business) return errorResponse({
       res: res,
       statusCode: 404,
       message: "Business not found"
     });
+
+    let updatedBusiness = business;
+
+    if (planId) {
+      const plan = await Plan.findById(planId);
+      if (!plan) return errorResponse({
+        res: res,
+        statusCode: 404,
+        message: "Plan not found"
+      });
+
+      const extraFields = {};
+      if (subscriptionStatus !== undefined) extraFields.subscriptionStatus = subscriptionStatus;
+      if (currentPeriodEnd !== undefined) extraFields.currentPeriodEnd = new Date(currentPeriodEnd);
+      if (maxOutlets !== undefined) extraFields.maxOutlets = maxOutlets;
+
+      updatedBusiness = await applyPlanToBusiness(business._id, plan, extraFields);
+    } else {
+      const updateFields = {};
+      if (maxOutlets !== undefined) updateFields.maxOutlets = maxOutlets;
+      if (subscriptionStatus !== undefined) updateFields.subscriptionStatus = subscriptionStatus;
+      if (currentPeriodEnd !== undefined) updateFields.currentPeriodEnd = new Date(currentPeriodEnd);
+
+      if (Object.keys(updateFields).length) {
+        updatedBusiness = await Business.findByIdAndUpdate(
+          business._id,
+          { $set: updateFields },
+          { new: true }
+        );
+      }
+    }
     
     await AuditLog.create({
       actorId: req.user?.userId,
       module: "admin",
       action: "manual_plan_update",
       targetType: "Business",
-      targetId: business._id,
-      targetName: business.name,
-      message: `Admin manually updated plan/subscription for ${business.name}`,
+      targetId: updatedBusiness._id,
+      targetName: updatedBusiness.name,
+      message: `Admin manually updated plan/subscription for ${updatedBusiness.name}`,
       ip: req.ip
     });
 
     return successResponse({
       res: res,
       data: {
-        business
+        business: updatedBusiness
       }
     });
   } catch (error) {
