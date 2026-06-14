@@ -192,7 +192,7 @@ async function register(req, res, next) {
         plan: "free",
         planType: "retail",
         businessProfile: "retail",
-        enabledFeatures: PLAN_FEATURE_TEMPLATES.hybrid,
+        enabledFeatures: PLAN_FEATURE_TEMPLATES.retail,
         maxOutlets: 1,
         maxStaff: 5,
         maxProducts: 50,
