@@ -323,7 +323,7 @@ export const expenseCreateSchema = z.object({
   category: z.string().trim().min(2, "Category is required"),
   amount: z.number().positive("Amount is required"),
   note: z.string().trim().optional(),
-  date: z.string().datetime().optional()
+  date: z.string().optional()
 }).passthrough();
 
 // Plan schemas (admin)
