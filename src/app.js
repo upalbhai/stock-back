@@ -23,6 +23,7 @@ import { paymentRouter } from "./routes/payments.js";
 import { featureRouter } from "./routes/features.js";
 import { customerRouter } from "./routes/customers.js";
 import { invoiceRouter } from "./routes/invoices.js";
+import { printRouter } from "./routes/print.js";
 import { errorHandler } from "./middlewares/error.js";
 import { requireActiveSubscription } from "./middlewares/subscription.js";
 import { requireAuth } from "./middlewares/auth.js";
@@ -36,24 +37,29 @@ const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1e3,
   // 15 minutes
   max: 20,
-  message: { message: "Too many login attempts. Try again later." }
+  message: { message: "Too many login attempts. Try again later." },
 });
 function createApp() {
   const app = express();
   app.use(helmet());
-  app.use(cors({
-    origin(origin, callback) {
-      if (isAllowedOrigin(origin)) {
-        return callback(null, true);
-      }
-      return callback(new Error(`CORS blocked for origin: ${origin}`));
-    },
-    credentials: true
-  }));
+  app.use(
+    cors({
+      origin(origin, callback) {
+        if (isAllowedOrigin(origin)) {
+          return callback(null, true);
+        }
+        return callback(new Error(`CORS blocked for origin: ${origin}`));
+      },
+      credentials: true,
+    }),
+  );
   app.use(express.json({ limit: "2mb" }));
   app.use(morgan("dev"));
   app.get("/api/health", (_req, res) => {
-    res.json({ status: "ok", timestamp: (/* @__PURE__ */ new Date()).toISOString() });
+    res.json({
+      status: "ok",
+      timestamp: /* @__PURE__ */ new Date().toISOString(),
+    });
   });
   app.use("/api/auth", authLimiter, authRouter);
   app.use("/api/admin", adminRouter);
@@ -62,7 +68,7 @@ function createApp() {
   app.use("/api/features", featureRouter);
 
   const withSub = [requireAuth, requireActiveSubscription, loadBusinessContext];
-  
+
   // Subscription-protected routes
   app.use("/api/businesses", ...withSub, businessRouter);
   app.use("/api/outlets", ...withSub, outletRouter);
@@ -78,10 +84,9 @@ function createApp() {
   app.use("/api/users", ...withSub, userRouter);
   app.use("/api/roles", ...withSub, roleRouter);
   app.use("/api/audit-logs", ...withSub, auditRouter);
-  
+  app.use("/api/print", ...withSub, printRouter);
+
   app.use(errorHandler);
   return app;
 }
-export {
-  createApp
-};
+export { createApp };

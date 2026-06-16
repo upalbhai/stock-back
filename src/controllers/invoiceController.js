@@ -14,7 +14,7 @@ async function listInvoices(req, res, next) {
     const query = {
       businessId,
       invoiceNumber: { $exists: true, $ne: null },
-      status: { $nin: ["voided", "cancelled"] }
+      status: { $nin: ["voided", "cancelled"] },
     };
     if (outletId) query.outletId = outletId;
     if (from || to) {
@@ -32,12 +32,17 @@ async function listInvoices(req, res, next) {
         .populate("customerId", "name phone gstin address")
         .populate("createdBy", "name")
         .lean(),
-      Order.countDocuments(query)
+      Order.countDocuments(query),
     ]);
 
     return successResponse({
       res,
-      data: { invoices: orders, total, page: Number(page), pages: Math.ceil(total / Number(limit)) }
+      data: {
+        invoices: orders,
+        total,
+        page: Number(page),
+        pages: Math.ceil(total / Number(limit)),
+      },
     });
   } catch (error) {
     return next(error);
@@ -52,24 +57,30 @@ async function getInvoice(req, res, next) {
     const order = await Order.findOne({
       _id: orderId,
       businessId,
-      invoiceNumber: { $exists: true, $ne: null }
+      invoiceNumber: { $exists: true, $ne: null },
     })
       .populate("customerId", "name phone gstin address")
       .populate("createdBy", "name")
       .lean();
 
     if (!order) {
-      return errorResponse({ res, statusCode: 404, message: "GST invoice not found" });
+      return errorResponse({
+        res,
+        statusCode: 404,
+        message: "GST invoice not found",
+      });
     }
 
     const [business, outlet] = await Promise.all([
-      Business.findById(businessId).select("name gstNumber address phone email").lean(),
-      Outlet.findById(order.outletId).select("name address phone email").lean()
+      Business.findById(businessId)
+        .select("name gstNumber address phone email")
+        .lean(),
+      Outlet.findById(order.outletId).select("name address phone email").lean(),
     ]);
 
     return successResponse({
       res,
-      data: { order, business, outlet }
+      data: { order, business, outlet },
     });
   } catch (error) {
     return next(error);
@@ -83,40 +94,78 @@ async function generateInvoice(req, res, next) {
 
     const order = await Order.findOne({ _id: orderId, businessId });
     if (!order) {
-      return errorResponse({ res, statusCode: 404, message: "Order not found" });
+      return errorResponse({
+        res,
+        statusCode: 404,
+        message: "Order not found",
+      });
     }
     if (order.status === "voided" || order.status === "cancelled") {
-      return errorResponse({ res, statusCode: 400, message: "Cannot generate invoice for voided order" });
+      return errorResponse({
+        res,
+        statusCode: 400,
+        message: "Cannot generate invoice for voided order",
+      });
     }
     if (order.invoiceNumber) {
-      return errorResponse({ res, statusCode: 400, message: "Invoice already generated" });
+      return errorResponse({
+        res,
+        statusCode: 400,
+        message: "Invoice already generated",
+      });
     }
     if (!order.tax || order.tax <= 0) {
-      return errorResponse({ res, statusCode: 400, message: "Order has no GST/tax — enable tax on the bill first" });
+      return errorResponse({
+        res,
+        statusCode: 400,
+        message: "Order has no GST/tax — enable tax on the bill first",
+      });
     }
     if (!order.customerId) {
       return errorResponse({
         res,
         statusCode: 400,
-        message: "Customer is required for GST invoice (buyer details)"
+        message: "Customer is required for GST invoice (buyer details)",
       });
     }
 
     const customer = await Customer.findById(order.customerId).lean();
-    if (!customer?.gstin) {
+    const customerGstin = (customer?.gstin ?? "")
+      .toString()
+      .trim()
+      .toUpperCase();
+    const gstinRegex = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
+
+    if (!customerGstin) {
       return errorResponse({
         res,
         statusCode: 400,
-        message: "Customer GSTIN is required for GST invoice"
+        message: "Customer GSTIN is required for GST invoice",
       });
     }
 
-    const business = await Business.findById(businessId).select("gstNumber name").lean();
+    if (!gstinRegex.test(customerGstin)) {
+      return errorResponse({
+        res,
+        statusCode: 400,
+        message: "Customer GSTIN is invalid. Enter a valid 15-character GSTIN",
+      });
+    }
+
+    if ((customer?.gstin ?? "").toString() !== customerGstin) {
+      await Customer.findByIdAndUpdate(order.customerId, {
+        gstin: customerGstin,
+      });
+    }
+
+    const business = await Business.findById(businessId)
+      .select("gstNumber name")
+      .lean();
     if (!business?.gstNumber) {
       return errorResponse({
         res,
         statusCode: 400,
-        message: "Business GSTIN not configured — add it in Settings"
+        message: "Business GSTIN not configured — add it in Settings",
       });
     }
 
@@ -124,7 +173,7 @@ async function generateInvoice(req, res, next) {
     await Order.findByIdAndUpdate(order._id, {
       invoiceNumber,
       invoiceGeneratedAt: new Date(),
-      invoiceGeneratedBy: userId
+      invoiceGeneratedBy: userId,
     });
 
     await AuditLog.create({
@@ -137,7 +186,7 @@ async function generateInvoice(req, res, next) {
       targetId: order._id,
       targetName: invoiceNumber,
       message: `GST invoice ${invoiceNumber} generated for ${order.orderNumber}`,
-      ip: req.ip
+      ip: req.ip,
     });
 
     const populated = await Order.findById(order._id)
@@ -149,7 +198,7 @@ async function generateInvoice(req, res, next) {
       res,
       statusCode: 201,
       data: { order: populated, invoiceNumber },
-      message: "GST invoice generated"
+      message: "GST invoice generated",
     });
   } catch (error) {
     return next(error);
