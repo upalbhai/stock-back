@@ -389,6 +389,95 @@ async function listTransfers(req, res, next) {
     return next(error);
   }
 }
+async function updateStockEntry(req, res, next) {
+  try {
+    const { businessId, userId } = req.user;
+    const { qty, lossReason, note } = req.body;
+    const entry = await StockEntry.findOne({ _id: req.params.id, businessId });
+    if (!entry) return errorResponse({ res, statusCode: 404, message: "Entry not found" });
+
+    // Only allow editing manual adjustments
+    if (!["wastage", "adjustment"].includes(entry.type)) {
+      return errorResponse({ res, statusCode: 400, message: "Only manual stock adjustments can be edited" });
+    }
+
+    const product = await Product.findOne({ _id: entry.productId, businessId });
+    if (!product) return errorResponse({ res, statusCode: 404, message: "Product not found" });
+
+    const qtyBefore = entry.qty;
+    const qtyDelta = qty - qtyBefore;
+    const newOnHand = product.onHandQty + qtyDelta;
+
+    const isLoss = qty < 0;
+    const unitCost = entry.soldUnitCost || resolveUnitCost(product, entry.packagingUnitId);
+    const count = getMovementCount({ soldQty: req.body.soldQty ?? entry.soldQty, qty });
+    
+    const costLoss = isLoss ? count * unitCost : 0;
+    const expectedProfit = (!isLoss && (entry.soldUnitPrice != null)) ? (count * entry.soldUnitPrice) - (count * unitCost) : 0;
+
+    await Product.findByIdAndUpdate(product._id, { onHandQty: newOnHand });
+
+    entry.qty = qty;
+    entry.qtyAfter = entry.qtyBefore + qty;
+    if (lossReason !== undefined) entry.lossReason = lossReason;
+    if (note !== undefined) entry.note = note;
+    entry.costLoss = costLoss;
+    if (!isLoss) entry.expectedProfit = expectedProfit;
+
+    await entry.save();
+
+    await AuditLog.create({
+      businessId,
+      actorId: userId,
+      module: "inventory",
+      action: "update_stock_entry",
+      targetType: "StockEntry",
+      targetId: entry._id,
+      message: `Stock entry edited. Qty changed from ${qtyBefore} to ${qty}. Product on-hand: ${newOnHand}`,
+      ip: req.ip
+    });
+
+    return successResponse({ res, message: "Stock entry updated successfully" });
+  } catch (error) {
+    return next(error);
+  }
+}
+
+async function deleteStockEntry(req, res, next) {
+  try {
+    const { businessId, userId } = req.user;
+    const entry = await StockEntry.findOne({ _id: req.params.id, businessId });
+    if (!entry) return errorResponse({ res, statusCode: 404, message: "Entry not found" });
+
+    if (!["wastage", "adjustment"].includes(entry.type)) {
+      return errorResponse({ res, statusCode: 400, message: "Only manual stock adjustments can be deleted" });
+    }
+
+    const product = await Product.findOne({ _id: entry.productId, businessId });
+    if (product) {
+      const newOnHand = product.onHandQty - entry.qty;
+      await Product.findByIdAndUpdate(product._id, { onHandQty: newOnHand });
+      
+      await AuditLog.create({
+        businessId,
+        actorId: userId,
+        module: "inventory",
+        action: "delete_stock_entry",
+        targetType: "StockEntry",
+        targetId: entry._id,
+        message: `Stock entry deleted. Reverted qty ${entry.qty}. Product on-hand: ${newOnHand}`,
+        ip: req.ip
+      });
+    }
+
+    await StockEntry.deleteOne({ _id: entry._id });
+
+    return successResponse({ res, message: "Stock entry deleted successfully" });
+  } catch (error) {
+    return next(error);
+  }
+}
+
 export {
   adjustStock,
   approveTransfer,
@@ -396,5 +485,7 @@ export {
   getStockAlerts,
   getStockHistory,
   getStockSummary,
-  listTransfers
+  listTransfers,
+  updateStockEntry,
+  deleteStockEntry
 };

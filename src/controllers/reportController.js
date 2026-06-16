@@ -387,11 +387,30 @@ function formatLedgerRow(entry) {
 async function getProfitLedger(req, res, next) {
   try {
     const { businessId } = req.user;
-    const { outletId, from, to, page = 1, limit = 50 } = req.query;
+    const { outletId, from, to, page = 1, limit = 50, search } = req.query;
     const query = { businessId };
     if (outletId) query.outletId = outletId;
     const createdAt = buildDateRangeQuery(from, to);
     if (createdAt) query.createdAt = createdAt;
+
+    const term = String(search || "").trim();
+    if (term) {
+      const matchingProducts = await Product.find({
+        businessId,
+        $or: [
+          { name: { $regex: term, $options: "i" } },
+          { sku: { $regex: term, $options: "i" } }
+        ]
+      }).select("_id").lean();
+      const productIds = matchingProducts.map((p) => p._id);
+      const orConditions = [
+        { note: { $regex: term, $options: "i" } },
+        { lossReason: { $regex: term, $options: "i" } },
+        { type: { $regex: term, $options: "i" } }
+      ];
+      if (productIds.length) orConditions.unshift({ productId: { $in: productIds } });
+      query.$or = orConditions;
+    }
 
     const skip = (Number(page) - 1) * Number(limit);
 
