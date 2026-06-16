@@ -6,7 +6,6 @@ const userSchema = new Schema(
     email: { type: String, trim: true, lowercase: true },
     emailVerified: { type: Boolean, default: false },
     passwordHash: { type: String },
-    pinHash: { type: String },
     businessId: { type: Schema.Types.ObjectId, ref: "Business" },
     outletIds: { type: [Schema.Types.ObjectId], ref: "Outlet", default: [] },
     roleId: { type: Schema.Types.ObjectId, ref: "Role" },

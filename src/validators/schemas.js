@@ -2,7 +2,6 @@ import { z } from "zod";
 
 export const emailSchema = z.string().trim().email("Enter a valid email address");
 export const phoneSchema = z.string().trim().min(8, "Enter a valid phone number").max(16, "Enter a valid phone number");
-export const pinSchema = z.string().trim().min(4, "PIN must be at least 4 digits").max(6, "PIN must be at most 6 digits");
 export const passwordSchema = z.string().min(6, "Password must be at least 6 characters").max(128);
 
 export const registerSchema = z.object({
@@ -19,12 +18,6 @@ export const registerSchema = z.object({
 export const emailLoginSchema = z.object({
   email: emailSchema,
   password: passwordSchema
-});
-
-// Legacy phone + PIN login (backward compat)
-export const loginSchema = z.object({
-  phone: phoneSchema,
-  pin: pinSchema
 });
 
 // Password reset
@@ -95,7 +88,7 @@ export const userCreateSchema = z.object({
   name: z.string().trim().min(2, "Name is required"),
   phone: phoneSchema,
   email: emailSchema.optional(),
-  pin: pinSchema,
+  password: passwordSchema,
   role: z.enum(["superadmin", "owner", "manager", "staff"]).optional(),
   roleId: z.string().trim().optional(),
   outletIds: z.array(z.string().trim()).optional()
@@ -109,7 +102,7 @@ export const userUpdateSchema = z.object({
   outletIds: z.array(z.string().trim()).optional(),
   isActive: z.boolean().optional(),
   emailVerified: z.boolean().optional(),
-  pin: pinSchema.optional()
+  password: passwordSchema.optional()
 });
 
 export const inviteCreateSchema = z.object({
@@ -123,7 +116,7 @@ export const inviteCreateSchema = z.object({
 
 export const inviteAcceptSchema = z.object({
   name: z.string().trim().min(2, "Name is required"),
-  pin: pinSchema
+  password: passwordSchema
 });
 
 export const roleCreateSchema = z.object({

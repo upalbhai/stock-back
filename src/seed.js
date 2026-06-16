@@ -26,8 +26,8 @@ async function seed() {
     await mongoose.connection.db.dropDatabase();
     console.log("Database cleared successfully!");
 
-    const pin = "1234";
-    const hashedPin = await bcrypt.hash(pin, 10);
+    const password = "password123";
+    const hashedPassword = await bcrypt.hash(password, 10);
 
     // 1. Create Super Admin
     console.log("Creating Super Admin...");
@@ -36,7 +36,7 @@ async function seed() {
       phone: "9999999999",
       email: "superadmin@outletpulse.com",
       role: "superadmin",
-      pinHash: hashedPin,
+      passwordHash: hashedPassword,
       isActive: true,
       emailVerified: true,
     });
@@ -48,7 +48,7 @@ async function seed() {
       phone: "9876543210",
       email: "rahul@outletpulse.com",
       role: "owner",
-      pinHash: hashedPin,
+      passwordHash: hashedPassword,
       isActive: true,
       emailVerified: true,
     });
@@ -104,7 +104,7 @@ async function seed() {
       roleId: managerRole?._id,
       businessId: business._id,
       outletIds: [outlet._id],
-      pinHash: hashedPin,
+      passwordHash: hashedPassword,
       isActive: true,
       emailVerified: true,
     });
@@ -115,19 +115,16 @@ async function seed() {
     console.log("\nDatabase seeded successfully!");
     console.log("--------------------------------------");
     console.log("Super Admin Login:");
-    console.log("Phone: 9999999999");
-    console.log("PIN: 1234");
     console.log("Email: superadmin@outletpulse.com");
+    console.log("Password: password123");
     console.log("--------------------------------------");
     console.log("Owner Login:");
-    console.log("Phone: 9876543210");
-    console.log("PIN: 1234");
     console.log("Email: rahul@outletpulse.com");
+    console.log("Password: password123");
     console.log("--------------------------------------");
     console.log("Manager Login:");
-    console.log("Phone: 7777777777");
-    console.log("PIN: 1234");
     console.log("Email: manoj@outletpulse.com");
+    console.log("Password: password123");
     console.log("--------------------------------------");
 
     process.exit(0);

@@ -216,7 +216,6 @@ async function register(req, res, next) {
     }
 
     const passwordHash = password ? await bcrypt.hash(password, 10) : undefined;
-    const pinHash = phone && password ? await bcrypt.hash(password.slice(0, 6), 10) : undefined;
 
     const user = await User.create({
       _id: userId,
@@ -227,7 +226,6 @@ async function register(req, res, next) {
       businessId: business?._id,
       outletIds: [finalOutletId],
       passwordHash,
-      pinHash,
       isActive: true,
       emailVerified: false
     });
@@ -381,95 +379,10 @@ async function loginWithEmail(req, res, next) {
   }
 }
 
-// ---------- LEGACY LOGIN WITH PHONE + PIN ----------
-async function login(req, res, next) {
-  try {
-    const { phone, pin } = req.body;
-    const user = await User.findOne({ phone, isActive: true }).populate("roleId").lean();
-    if (!user) {
-      return errorResponse({
-        res: res,
-        statusCode: 401,
-        message: "Invalid credentials"
-      });
-    }
-    if (!user.pinHash) {
-      return errorResponse({
-        res: res,
-        statusCode: 401,
-        message: "PIN login not available for this account"
-      });
-    }
-    const isValid = await bcrypt.compare(pin, user.pinHash);
-    if (!isValid) {
-      return errorResponse({
-        res: res,
-        statusCode: 401,
-        message: "Invalid credentials"
-      });
-    }
-
-    // Check subscription
-    let subscriptionStatus = null;
-    let trialEndsAt = null;
-    let trialExpired = false;
-    if (user.businessId && user.role !== "superadmin") {
-      const biz = await Business.findById(user.businessId).lean();
-      if (biz) {
-        subscriptionStatus = biz.subscriptionStatus;
-        trialEndsAt = biz.trialEndsAt;
-        if (biz.subscriptionStatus === "trial" && biz.trialEndsAt && new Date() > new Date(biz.trialEndsAt)) {
-          trialExpired = true;
-          await Business.findByIdAndUpdate(biz._id, { subscriptionStatus: "expired" });
-          subscriptionStatus = "expired";
-        }
-        if (biz.subscriptionStatus === "expired") trialExpired = true;
-      }
-    }
-
-    const primaryOutletId = user.outletIds?.[0]?.toString() || undefined;
-    const { token } = await createLoginSession({
-      user,
-      req,
-      tokenPayload: {
-        userId: user._id.toString(),
-        role: user.role,
-        businessId: user.businessId?.toString(),
-        outletId: primaryOutletId,
-        outletIds: user.outletIds?.map((id) => id.toString()) || [],
-        roleId: user.roleId?.toString()
-      }
-    });
-
-    await AuditLog.create({
-      businessId: user.businessId,
-      actorId: user._id,
-      actorName: user.name,
-      actorRole: user.role,
-      module: "auth",
-      action: "login",
-      message: "User logged in via phone+PIN",
-      ip: req.ip,
-      userAgent: req.headers["user-agent"]
-    });
-
-    return successResponse({
-      res: res,
-
-      data: {
-        token,
-        user: await buildAuthUserResponse(user, { subscriptionStatus, trialEndsAt, trialExpired })
-      }
-    });
-  } catch (error) {
-    return next(error);
-  }
-}
-
 // ---------- GET ME ----------
 async function getMe(req, res, next) {
   try {
-    const user = await User.findById(req.user?.userId).select("-pinHash -passwordHash -inviteToken").populate("roleId", "name permissions outletScope outletIds").lean();
+    const user = await User.findById(req.user?.userId).select("-passwordHash -inviteToken").populate("roleId", "name permissions outletScope outletIds").lean();
     if (!user) {
       return errorResponse({
         res: res,
@@ -854,7 +767,6 @@ async function setupPassword(req, res, next) {
 
 export {
   getMe,
-  login,
   loginWithEmail,
   checkEmail,
   register,

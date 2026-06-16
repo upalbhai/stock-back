@@ -22,8 +22,6 @@ async function seedAdmin() {
 
     const password = "password123";
     const hashedPassword = await bcrypt.hash(password, 10);
-    const pin = "1234";
-    const hashedPin = await bcrypt.hash(pin, 10);
 
     console.log("Creating Super Admin...");
     await User.findOneAndUpdate(
@@ -34,7 +32,6 @@ async function seedAdmin() {
         email: "superadmin@outletpulse.com",
         role: "superadmin",
         passwordHash: hashedPassword,
-        pinHash: hashedPin,
         isActive: true,
         emailVerified: true,
       },

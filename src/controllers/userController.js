@@ -27,7 +27,7 @@ async function listUsers(req, res, next) {
     if (isActive !== void 0) query.isActive = isActive === "true";
 
     const users = await User.find(query)
-      .select("-pinHash -inviteToken")
+      .select("-passwordHash -inviteToken")
       .populate("roleId", "name permissions")
       .sort({ name: 1 })
       .lean();
@@ -48,7 +48,7 @@ async function getUser(req, res, next) {
   try {
     const { businessId } = req.user;
     const user = await User.findOne({ _id: req.params.id, businessId })
-      .select("-pinHash -inviteToken")
+      .select("-passwordHash -inviteToken")
       .populate("roleId", "name permissions outletScope outletIds")
       .lean();
 
@@ -75,7 +75,7 @@ async function createUser(req, res, next) {
     if (!canAdd) return;
 
     const { businessId } = req.user;
-    const { name, phone, email, pin, role, roleId, outletIds } = req.body;
+    const { name, phone, email, password, role, roleId, outletIds } = req.body;
 
     const existingPhone = await User.findOne({ phone });
     if (existingPhone) return errorResponse({
@@ -110,7 +110,7 @@ async function createUser(req, res, next) {
       }
     }
 
-    const pinHash = await bcrypt.hash(pin, 10);
+    const passwordHash = await bcrypt.hash(password, 10);
     const user = await User.create({
       businessId,
       name,
@@ -119,7 +119,7 @@ async function createUser(req, res, next) {
       role: role || "staff",
       roleId: roleId || null,
       outletIds: outletIds || [],
-      pinHash,
+      passwordHash,
       emailVerified: !!email
     });
 
@@ -135,7 +135,7 @@ async function createUser(req, res, next) {
       ip: req.ip
     });
 
-    const clean = { ...user.toObject(), pinHash: void 0 };
+    const clean = { ...user.toObject(), passwordHash: void 0 };
     return successResponse({
       res: res,
       statusCode: 201,
@@ -158,8 +158,8 @@ async function updateUser(req, res, next) {
       if (req.body[key] !== void 0) update[key] = req.body[key];
     }
 
-    if (req.body.pin) {
-      update.pinHash = await bcrypt.hash(req.body.pin, 10);
+    if (req.body.password) {
+      update.passwordHash = await bcrypt.hash(req.body.password, 10);
     }
 
     if (update.roleId) {
@@ -183,7 +183,7 @@ async function updateUser(req, res, next) {
       { _id: req.params.id, businessId },
       { $set: update },
       { new: true }
-    ).select("-pinHash -inviteToken");
+    ).select("-passwordHash -inviteToken");
 
     if (!user) return errorResponse({
       res: res,
@@ -330,7 +330,7 @@ async function acceptInvite(req, res, next) {
       message: "Invite expired"
     });
 
-    const { name, pin } = req.body;
+    const { name, password } = req.body;
     const existingPhone = invite.phone ? await User.findOne({ phone: invite.phone }) : null;
     if (existingPhone) return errorResponse({
       res: res,
@@ -344,7 +344,7 @@ async function acceptInvite(req, res, next) {
       message: "Email already registered on the platform"
     });
 
-    const pinHash = await bcrypt.hash(pin, 10);
+    const passwordHash = await bcrypt.hash(password, 10);
     const user = await User.create({
       businessId: invite.businessId,
       name,
@@ -353,7 +353,7 @@ async function acceptInvite(req, res, next) {
       role: invite.role,
       roleId: invite.roleId || null,
       outletIds: invite.outletIds || [],
-      pinHash,
+      passwordHash,
       emailVerified: !!invite.email
     });
 
