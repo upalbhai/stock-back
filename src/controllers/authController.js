@@ -78,6 +78,27 @@ function makeCode() {
   return Math.floor(100000 + Math.random() * 900000).toString();
 }
 
+async function createAndSendLoginOtp(email) {
+  const normalizedEmail = email.toLowerCase();
+  const code = makeCode();
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+  const otp = await EmailOtp.create({
+    email: normalizedEmail,
+    code,
+    type: "login",
+    expiresAt
+  });
+
+  try {
+    await mailer.sendOtpEmail(normalizedEmail, code);
+  } catch (error) {
+    await EmailOtp.findByIdAndDelete(otp._id).catch((deleteError) => {
+      console.warn("Failed to delete unsent OTP", deleteError.message);
+    });
+    throw error;
+  }
+}
+
 /**
  * Create a login session, detect new devices, and send alert emails.
  * Returns { token, session } where token includes sessionId.
@@ -431,14 +452,7 @@ async function checkEmail(req, res, next) {
     }
 
     if (!user.emailVerified) {
-      const code = makeCode();
-      const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
-      await EmailOtp.create({ email: email.toLowerCase(), code, type: "login", expiresAt });
-      try {
-        await mailer.sendOtpEmail(email, code);
-      } catch (e) {
-        console.warn("Failed to send OTP email", e.message);
-      }
+      await createAndSendLoginOtp(email);
       return successResponse({
         res: res,
         message: "Email not verified. OTP sent to your email.",
@@ -460,14 +474,7 @@ async function checkEmail(req, res, next) {
     }
 
     // If no password, generate and send OTP automatically
-    const code = makeCode();
-    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
-    await EmailOtp.create({ email: email.toLowerCase(), code, type: "login", expiresAt });
-    try {
-      await mailer.sendOtpEmail(email, code);
-    } catch (e) {
-      console.warn("Failed to send OTP email", e.message);
-    }
+    await createAndSendLoginOtp(email);
     
     return successResponse({
       res: res,
@@ -491,14 +498,7 @@ async function sendLoginOtp(req, res, next) {
       statusCode: 400,
       message: "Email is required"
     });
-    const code = makeCode();
-    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
-    await EmailOtp.create({ email: email.toLowerCase(), code, type: "login", expiresAt });
-    try {
-      await mailer.sendOtpEmail(email, code);
-    } catch (e) {
-      console.warn("Failed to send OTP email", e.message);
-    }
+    await createAndSendLoginOtp(email);
     return successResponse({
       res: res,
       message: "OTP sent to your email"

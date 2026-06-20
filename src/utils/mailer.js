@@ -23,8 +23,9 @@ const SENDER = {
 
 async function sendEmail({ to, subject, html, text }) {
   if (!process.env.BREVO_API_KEY && !env.BREVO_API_KEY) {
-    console.warn("BREVO_API_KEY not configured; skipping email");
-    return null;
+    const error = new Error("BREVO_API_KEY is not configured");
+    error.status = 500;
+    throw error;
   }
   if (!fetchImpl) {
     throw new Error("Fetch is not available in this Node runtime");
@@ -47,7 +48,9 @@ async function sendEmail({ to, subject, html, text }) {
   if (!res.ok) {
     const txt = await res.text();
     console.error("Brevo send failed:", res.status, txt);
-    throw new Error("Email send failed");
+    const error = new Error(`Brevo email send failed (${res.status}): ${txt}`);
+    error.status = 502;
+    throw error;
   }
   return await res.json();
 }
