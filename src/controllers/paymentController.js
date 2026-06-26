@@ -1,6 +1,6 @@
 import { successResponse } from "../utils/successResponse.js";
 import { errorResponse } from "../utils/errorResponse.js";
-import Razorpay from "Razorpay";
+import Razorpay from "razorpay";
 import crypto from "crypto";
 import { env } from "../config/env.js";
 import { Plan } from "../models/Plan.js";
