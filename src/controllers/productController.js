@@ -5,6 +5,7 @@ import { Unit } from "../models/Unit.js";
 import { StockEntry } from "../models/StockEntry.js";
 import { AuditLog } from "../models/AuditLog.js";
 import { assertCanAddProduct } from "../utils/planLimits.js";
+import { withTransaction } from "../utils/transaction.js";
 
 async function validatePackagingUnits(businessId, packagingUnits) {
   if (!packagingUnits?.length) return [];
@@ -111,113 +112,118 @@ async function getProduct(req, res, next) {
 }
 async function createProduct(req, res, next) {
   try {
-    const canAdd = await assertCanAddProduct(req, res);
-    if (!canAdd) return;
+    return await withTransaction(async (session) => {
+      const canAdd = await assertCanAddProduct(req, res);
+      if (!canAdd) return;
 
-    const { businessId } = req.user;
-    const {
-      outletId,
-      categoryId,
-      name,
-      description,
-      sku,
-      barcode,
-      unit,
-      unitId,
-      price,
-      costPrice,
-      taxRate,
-      gstRate,
-      hsnCode,
-      packagingUnits,
-      onHandQty,
-      lowStockThreshold,
-      isFeatured,
-      image,
-      tags,
-      sortOrder
-    } = req.body;
-    // If unitId provided, validate it belongs to this business (or is global i.e. outletId: null)
-    if (unitId) {
-      const unitDoc = await Unit.findOne({ _id: unitId, businessId });
-      if (!unitDoc) {
-        // also allow business-global units (outletId null)
-        const globalUnit = await Unit.findOne({ _id: unitId, outletId: null });
-        if (!globalUnit) return errorResponse({ res, statusCode: 400, message: "Invalid unitId" });
+      const { businessId } = req.user;
+      const {
+        outletId,
+        categoryId,
+        name,
+        description,
+        sku,
+        barcode,
+        unit,
+        unitId,
+        price,
+        costPrice,
+        taxRate,
+        gstRate,
+        hsnCode,
+        packagingUnits,
+        onHandQty,
+        lowStockThreshold,
+        isFeatured,
+        image,
+        tags,
+        sortOrder
+      } = req.body;
+      // If unitId provided, validate it belongs to this business (or is global i.e. outletId: null)
+      if (unitId) {
+        const unitDoc = await Unit.findOne({ _id: unitId, businessId }).session(session);
+        if (!unitDoc) {
+          // also allow business-global units (outletId null)
+          const globalUnit = await Unit.findOne({ _id: unitId, outletId: null }).session(session);
+          if (!globalUnit) return errorResponse({ res, statusCode: 400, message: "Invalid unitId" });
+        }
       }
-    }
 
-    let validatedPackaging = [];
-    if (packagingUnits?.length) {
-      const enabled = req.enabledFeatures || [];
-      if (!enabled.includes("packaging_units") && req.user?.role !== "superadmin") {
-        return errorResponse({
-          res,
-          statusCode: 403,
-          message: "Packaging units not available on your plan"
-        });
+      let validatedPackaging = [];
+      if (packagingUnits?.length) {
+        const enabled = req.enabledFeatures || [];
+        if (!enabled.includes("packaging_units") && req.user?.role !== "superadmin") {
+          return errorResponse({
+            res,
+            statusCode: 403,
+            message: "Packaging units not available on your plan"
+          });
+        }
+        const validatedPkgs = await validatePackagingUnits(businessId, packagingUnits);
+        if (validatedPkgs.error) {
+          return errorResponse({ res, statusCode: 400, message: validatedPkgs.error });
+        }
+        validatedPackaging = validatedPkgs;
       }
-      const validatedPkgs = await validatePackagingUnits(businessId, packagingUnits);
-      if (validatedPkgs.error) {
-        return errorResponse({ res, statusCode: 400, message: validatedPkgs.error });
-      }
-      validatedPackaging = validatedPkgs;
-    }
 
-    const product = await Product.create({
-      businessId,
-      outletId,
-      categoryId,
-      name,
-      description,
-      sku,
-      barcode,
-      unitId: unitId || undefined,
-      unit: unit || "pcs",
-      price,
-      costPrice: costPrice || 0,
-      taxRate: taxRate || 0,
-      gstRate: gstRate || 0,
-      hsnCode: hsnCode || undefined,
-      packagingUnits: validatedPackaging,
-      onHandQty: onHandQty || 0,
-      lowStockThreshold: lowStockThreshold || 10,
-      isFeatured: isFeatured || false,
-      image,
-      tags: tags || [],
-      sortOrder: sortOrder || 0
-    });
-    if (onHandQty > 0) {
-      await StockEntry.create({
+      const product = await new Product({
         businessId,
         outletId,
-        productId: product._id,
-        type: "opening",
-        qty: onHandQty,
-        qtyBefore: 0,
-        qtyAfter: onHandQty,
-        note: "Opening stock",
-        createdBy: req.user?.userId
-      });
-    }
-    await AuditLog.create({
-      businessId,
-      actorId: req.user?.userId,
-      module: "products",
-      action: "create",
-      targetType: "Product",
-      targetId: product._id,
-      targetName: product.name,
-      message: `Product created: ${product.name}`,
-      ip: req.ip
-    });
-    return successResponse({
-      res: res,
-      statusCode: 201,
-
-      data: {
-        product
+        categoryId,
+        name,
+        description,
+        sku,
+        barcode,
+        unitId: unitId || undefined,
+        unit: unit || "pcs",
+        price,
+        costPrice: costPrice || 0,
+        taxRate: taxRate || 0,
+        gstRate: gstRate || 0,
+        hsnCode: hsnCode || undefined,
+        packagingUnits: validatedPackaging,
+        onHandQty: onHandQty || 0,
+        lowStockThreshold: lowStockThreshold || 10,
+        isFeatured: isFeatured || false,
+        image,
+        tags: tags || [],
+        sortOrder: sortOrder || 0
+      }).save({ session });
+      
+      if (onHandQty > 0) {
+        await new StockEntry({
+          businessId,
+          outletId,
+          productId: product._id,
+          type: "opening",
+          qty: onHandQty,
+          qtyBefore: 0,
+          qtyAfter: onHandQty,
+          note: "Opening stock",
+          createdBy: req.user?.userId
+        }).save({ session });
       }
+      
+      await new AuditLog({
+        businessId,
+        actorId: req.user?.userId,
+        module: "products",
+        action: "create",
+        targetType: "Product",
+        targetId: product._id,
+        targetName: product.name,
+        message: `Product created: ${product.name}`,
+        ip: req.ip
+      }).save({ session });
+      
+      return successResponse({
+        res: res,
+        statusCode: 201,
+
+        data: {
+          product
+        }
+      });
     });
   } catch (error) {
     return next(error);

@@ -12,6 +12,7 @@ import { Business } from "../models/Business.js";
 import { applyCustomerDebit, reverseOrderCustomerLedger } from "../utils/customerLedger.js";
 import { getNextInvoiceNumber } from "../utils/invoiceNumber.js";
 import { getOrderLineCost } from "../utils/stockCostUtils.js";
+import { withTransaction } from "../utils/transaction.js";
 
 async function getNextOrderNumber(businessId) {
   const count = await Order.countDocuments({ businessId });
@@ -25,16 +26,16 @@ function buildOrderRecordStatusFilter(recordStatus) {
   return { status: { $nin: ["voided", "refunded", "cancelled"] } };
 }
 
-async function restoreOrderStock({ order, businessId, userId, notePrefix, entryType = "return" }) {
+async function restoreOrderStock({ order, businessId, userId, notePrefix, entryType = "return", session }) {
   for (const item of order.items) {
     if (!item.productId) continue;
     const stockQty = getItemStockQty(item);
-    const product = await Product.findById(item.productId);
+    const product = await Product.findById(item.productId).session(session);
     if (!product) continue;
     const qtyBefore = product.onHandQty;
     const qtyAfter = qtyBefore + stockQty;
-    await Product.findByIdAndUpdate(item.productId, { $inc: { onHandQty: stockQty } });
-    await StockEntry.create({
+    await Product.findByIdAndUpdate(item.productId, { $inc: { onHandQty: stockQty } }, { session });
+    await new StockEntry({
       businessId,
       outletId: order.outletId,
       productId: item.productId,
@@ -51,13 +52,14 @@ async function restoreOrderStock({ order, businessId, userId, notePrefix, entryT
       referenceId: order._id,
       referenceType: "Order",
       createdBy: userId
-    });
+    }).save({ session });
   }
 }
 
 async function createOrder(req, res, next) {
   try {
-    const { businessId, userId } = req.user;
+    return await withTransaction(async (session) => {
+      const { businessId, userId } = req.user;
     const {
       outletId,
       items,
@@ -241,7 +243,7 @@ async function createOrder(req, res, next) {
       invoiceNumber = await getNextInvoiceNumber(businessId);
     }
 
-    const order = await Order.create({
+    const order = await new Order({
       businessId,
       outletId,
       orderNumber,
@@ -268,10 +270,10 @@ async function createOrder(req, res, next) {
       invoiceGeneratedAt: invoiceNumber ? new Date() : undefined,
       invoiceGeneratedBy: invoiceNumber ? userId : undefined,
       createdBy: userId
-    });
+    }).save({ session });
 
     if (payment && amountPaid > 0) {
-      const pmnt = await Payment.create({
+      const pmnt = await new Payment({
         businessId,
         outletId,
         orderId: order._id,
@@ -279,8 +281,8 @@ async function createOrder(req, res, next) {
         amount: amountPaid,
         split: payment.split || {},
         receivedBy: userId
-      });
-      await Order.findByIdAndUpdate(order._id, { $push: { payments: pmnt._id } });
+      }).save({ session });
+      await Order.findByIdAndUpdate(order._id, { $push: { payments: pmnt._id } }, { session });
     }
 
     if (amountDue > 0 && resolvedCustomerId) {
@@ -291,21 +293,22 @@ async function createOrder(req, res, next) {
         amount: amountDue,
         orderId: order._id,
         userId,
-        note: `Credit sale ${orderNumber}`
+        note: `Credit sale ${orderNumber}`,
+        session
       });
     }
 
     for (const item of items) {
       if (item.productId) {
         const stockQty = getItemStockQty(item);
-        const product = await Product.findById(item.productId);
+        const product = await Product.findById(item.productId).session(session);
         if (product) {
           const qtyBefore = product.onHandQty;
           const qtyAfter = qtyBefore - stockQty;
           const lineRevenue = item.lineTotal ?? 0;
           const lineCost = getOrderLineCost(product, item);
-          await Product.findByIdAndUpdate(item.productId, { $inc: { onHandQty: -stockQty } });
-          await StockEntry.create({
+          await Product.findByIdAndUpdate(item.productId, { $inc: { onHandQty: -stockQty } }, { session });
+          await new StockEntry({
             businessId,
             outletId,
             productId: item.productId,
@@ -325,12 +328,12 @@ async function createOrder(req, res, next) {
             realizedRevenue: lineRevenue,
             realizedCost: lineCost,
             realizedProfit: lineRevenue - lineCost
-          });
+          }).save({ session });
         }
       }
     }
 
-    await AuditLog.create({
+    await new AuditLog({
       businessId,
       outletId,
       actorId: userId,
@@ -341,17 +344,19 @@ async function createOrder(req, res, next) {
       targetName: orderNumber,
       message: `Order ${orderNumber} created — ₹${total}`,
       ip: req.ip
-    });
+    }).save({ session });
 
     const populated = await Order.findById(order._id)
       .populate("payments")
       .populate("createdBy", "name")
+      .session(session)
       .lean();
 
     return successResponse({
       res: res,
       statusCode: 201,
       data: { order: populated }
+    });
     });
   } catch (error) {
     return next(error);
@@ -420,56 +425,60 @@ async function getOrder(req, res, next) {
 
 async function refundOrder(req, res, next) {
   try {
-    const { businessId, userId } = req.user;
-    const { reason } = req.body;
-    const order = await Order.findOne({ _id: req.params.id, businessId });
-    if (!order) {
-      return errorResponse({ res, statusCode: 404, message: "Order not found" });
-    }
-    if (order.status === "refunded") {
-      return errorResponse({ res, statusCode: 400, message: "Already refunded" });
-    }
-    if (order.status === "voided") {
-      return errorResponse({ res, statusCode: 400, message: "Cannot refund a voided order" });
-    }
+    return await withTransaction(async (session) => {
+      const { businessId, userId } = req.user;
+      const { reason } = req.body;
+      const order = await Order.findOne({ _id: req.params.id, businessId }).session(session);
+      if (!order) {
+        return errorResponse({ res, statusCode: 404, message: "Order not found" });
+      }
+      if (order.status === "refunded") {
+        return errorResponse({ res, statusCode: 400, message: "Already refunded" });
+      }
+      if (order.status === "voided") {
+        return errorResponse({ res, statusCode: 400, message: "Cannot refund a voided order" });
+      }
 
-    await Order.findByIdAndUpdate(order._id, {
-      status: "refunded",
-      paymentStatus: "pending",
-      refundedAt: new Date(),
-      refundedBy: userId,
-      refundReason: reason
+      await Order.findByIdAndUpdate(order._id, {
+        status: "refunded",
+        paymentStatus: "pending",
+        refundedAt: new Date(),
+        refundedBy: userId,
+        refundReason: reason
+      }, { session });
+
+      await restoreOrderStock({
+        order,
+        businessId,
+        userId,
+        notePrefix: "Refund",
+        entryType: "return",
+        session
+      });
+
+      await reverseOrderCustomerLedger({
+        order,
+        userId,
+        reason: `Refund: ${reason}`,
+        type: "credit_note",
+        session
+      });
+
+      await new AuditLog({
+        businessId,
+        outletId: order.outletId,
+        actorId: userId,
+        module: "billing",
+        action: "refund",
+        targetType: "Order",
+        targetId: order._id,
+        targetName: order.orderNumber,
+        message: `Order ${order.orderNumber} refunded. Reason: ${reason}`,
+        ip: req.ip
+      }).save({ session });
+
+      return successResponse({ res, message: "Order refunded and stock restored" });
     });
-
-    await restoreOrderStock({
-      order,
-      businessId,
-      userId,
-      notePrefix: "Refund",
-      entryType: "return"
-    });
-
-    await reverseOrderCustomerLedger({
-      order,
-      userId,
-      reason: `Refund: ${reason}`,
-      type: "credit_note"
-    });
-
-    await AuditLog.create({
-      businessId,
-      outletId: order.outletId,
-      actorId: userId,
-      module: "billing",
-      action: "refund",
-      targetType: "Order",
-      targetId: order._id,
-      targetName: order.orderNumber,
-      message: `Order ${order.orderNumber} refunded. Reason: ${reason}`,
-      ip: req.ip
-    });
-
-    return successResponse({ res, message: "Order refunded and stock restored" });
   } catch (error) {
     return next(error);
   }
@@ -477,55 +486,59 @@ async function refundOrder(req, res, next) {
 
 async function voidOrder(req, res, next) {
   try {
-    const { businessId, userId } = req.user;
-    const { reason } = req.body;
-    const order = await Order.findOne({ _id: req.params.id, businessId });
-    if (!order) {
-      return errorResponse({ res, statusCode: 404, message: "Order not found" });
-    }
-    if (order.status === "voided") {
-      return errorResponse({ res, statusCode: 400, message: "Already voided" });
-    }
-    if (order.status === "refunded") {
-      return errorResponse({ res, statusCode: 400, message: "Cannot void a refunded order" });
-    }
+    return await withTransaction(async (session) => {
+      const { businessId, userId } = req.user;
+      const { reason } = req.body;
+      const order = await Order.findOne({ _id: req.params.id, businessId }).session(session);
+      if (!order) {
+        return errorResponse({ res, statusCode: 404, message: "Order not found" });
+      }
+      if (order.status === "voided") {
+        return errorResponse({ res, statusCode: 400, message: "Already voided" });
+      }
+      if (order.status === "refunded") {
+        return errorResponse({ res, statusCode: 400, message: "Cannot void a refunded order" });
+      }
 
-    await Order.findByIdAndUpdate(order._id, {
-      status: "voided",
-      paymentStatus: "pending",
-      voidedAt: new Date(),
-      voidedBy: userId,
-      voidReason: reason
+      await Order.findByIdAndUpdate(order._id, {
+        status: "voided",
+        paymentStatus: "pending",
+        voidedAt: new Date(),
+        voidedBy: userId,
+        voidReason: reason
+      }, { session });
+
+      await restoreOrderStock({
+        order,
+        businessId,
+        userId,
+        notePrefix: "Void",
+        entryType: "adjustment",
+        session
+      });
+
+      await reverseOrderCustomerLedger({
+        order,
+        userId,
+        reason: reason || `Void: ${order.orderNumber}`,
+        session
+      });
+
+      await new AuditLog({
+        businessId,
+        outletId: order.outletId,
+        actorId: userId,
+        module: "billing",
+        action: "void",
+        targetType: "Order",
+        targetId: order._id,
+        targetName: order.orderNumber,
+        message: `Order ${order.orderNumber} voided. Reason: ${reason}`,
+        ip: req.ip
+      }).save({ session });
+
+      return successResponse({ res, message: "Order voided and stock restored" });
     });
-
-    await restoreOrderStock({
-      order,
-      businessId,
-      userId,
-      notePrefix: "Void",
-      entryType: "adjustment"
-    });
-
-    await reverseOrderCustomerLedger({
-      order,
-      userId,
-      reason: reason || `Void: ${order.orderNumber}`
-    });
-
-    await AuditLog.create({
-      businessId,
-      outletId: order.outletId,
-      actorId: userId,
-      module: "billing",
-      action: "void",
-      targetType: "Order",
-      targetId: order._id,
-      targetName: order.orderNumber,
-      message: `Order ${order.orderNumber} voided. Reason: ${reason}`,
-      ip: req.ip
-    });
-
-    return successResponse({ res, message: "Order voided and stock restored" });
   } catch (error) {
     return next(error);
   }

@@ -17,7 +17,7 @@ const STANDARD_UNITS = [
   { name: "Box", abbreviation: "box", sortOrder: 8 }
 ];
 
-export async function seedStandardUnits(businessId) {
+export async function seedStandardUnits(businessId, session = null) {
   if (!businessId) throw new Error("businessId required");
   await connectDatabase();
 
@@ -36,7 +36,7 @@ export async function seedStandardUnits(businessId) {
           isActive: true
         }
       },
-      { upsert: true }
+      { upsert: true, session }
     );
     console.log(`Upserted unit: ${u.name}`);
   }

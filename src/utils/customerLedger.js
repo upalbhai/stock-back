@@ -13,12 +13,13 @@ export async function applyCustomerDebit({
   orderId,
   userId,
   note,
-  type = "sale"
+  type = "sale",
+  session
 }) {
   const debitAmount = round2(amount);
   if (debitAmount <= 0) return null;
 
-  const customer = await Customer.findOne({ _id: customerId, businessId, isActive: true });
+  const customer = await Customer.findOne({ _id: customerId, businessId, isActive: true }).session(session);
   if (!customer) {
     const err = new Error("Customer not found");
     err.statusCode = 404;
@@ -34,9 +35,9 @@ export async function applyCustomerDebit({
   }
 
   const balanceAfter = round2(customer.outstandingBalance + debitAmount);
-  await Customer.findByIdAndUpdate(customerId, { outstandingBalance: balanceAfter });
+  await Customer.findByIdAndUpdate(customerId, { outstandingBalance: balanceAfter }, { session });
 
-  return CustomerTransaction.create({
+  return new CustomerTransaction({
     businessId,
     outletId,
     customerId,
@@ -47,7 +48,7 @@ export async function applyCustomerDebit({
     balanceAfter,
     note,
     createdBy: userId
-  });
+  }).save({ session });
 }
 
 export async function applyCustomerCredit({
@@ -59,12 +60,13 @@ export async function applyCustomerCredit({
   paymentId,
   userId,
   note,
-  type = "payment"
+  type = "payment",
+  session
 }) {
   const creditAmount = round2(amount);
   if (creditAmount <= 0) return null;
 
-  const customer = await Customer.findOne({ _id: customerId, businessId });
+  const customer = await Customer.findOne({ _id: customerId, businessId }).session(session);
   if (!customer) {
     const err = new Error("Customer not found");
     err.statusCode = 404;
@@ -72,9 +74,9 @@ export async function applyCustomerCredit({
   }
 
   const balanceAfter = round2(Math.max(0, customer.outstandingBalance - creditAmount));
-  await Customer.findByIdAndUpdate(customerId, { outstandingBalance: balanceAfter });
+  await Customer.findByIdAndUpdate(customerId, { outstandingBalance: balanceAfter }, { session });
 
-  return CustomerTransaction.create({
+  return new CustomerTransaction({
     businessId,
     outletId,
     customerId,
@@ -86,10 +88,10 @@ export async function applyCustomerCredit({
     balanceAfter,
     note,
     createdBy: userId
-  });
+  }).save({ session });
 }
 
-export async function reverseOrderCustomerLedger({ order, userId, reason, type = "void_reversal" }) {
+export async function reverseOrderCustomerLedger({ order, userId, reason, type = "void_reversal", session }) {
   if (!order.customerId || !order.amountDue || order.amountDue <= 0) return null;
 
   const existing = await CustomerTransaction.findOne({
@@ -97,7 +99,7 @@ export async function reverseOrderCustomerLedger({ order, userId, reason, type =
     orderId: order._id,
     type: "sale",
     status: "active"
-  });
+  }).session(session);
   if (!existing) return null;
 
   await CustomerTransaction.findByIdAndUpdate(existing._id, {
@@ -105,7 +107,7 @@ export async function reverseOrderCustomerLedger({ order, userId, reason, type =
     voidedAt: new Date(),
     voidedBy: userId,
     voidReason: reason
-  });
+  }, { session });
 
   return applyCustomerCredit({
     customerId: order.customerId,
@@ -115,6 +117,7 @@ export async function reverseOrderCustomerLedger({ order, userId, reason, type =
     orderId: order._id,
     userId,
     note: reason || `Reversal for ${order.orderNumber}`,
-    type
+    type,
+    session
   });
 }
