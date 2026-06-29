@@ -90,7 +90,7 @@ export const userCreateSchema = z.object({
   email: emailSchema.optional(),
   password: passwordSchema,
   role: z.enum(["superadmin", "owner", "manager", "staff"]).optional(),
-  roleId: z.string().trim().optional(),
+  roleId: z.string().trim().optional().nullable(),
   outletIds: z.array(z.string().trim()).optional()
 });
 
@@ -98,7 +98,7 @@ export const userUpdateSchema = z.object({
   name: z.string().trim().min(2).optional(),
   email: emailSchema.optional(),
   role: z.enum(["superadmin", "owner", "manager", "staff"]).optional(),
-  roleId: z.string().trim().optional(),
+  roleId: z.string().trim().optional().nullable(),
   outletIds: z.array(z.string().trim()).optional(),
   isActive: z.boolean().optional(),
   emailVerified: z.boolean().optional(),

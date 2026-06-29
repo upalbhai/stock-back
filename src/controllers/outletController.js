@@ -10,9 +10,12 @@ function makeCode(name) {
 async function listOutlets(req, res, next) {
   try {
     const { businessId, role, outletIds } = req.user;
-    let query = { businessId, isActive: true };
-    if (role !== "owner" && role !== "superadmin" && outletIds?.length) {
-      query._id = { $in: outletIds };
+    let query = { businessId };
+    if (role !== "owner" && role !== "superadmin") {
+      query.isActive = true;
+      if (outletIds?.length) {
+        query._id = { $in: outletIds };
+      }
     }
     const outlets = await Outlet.find(query).populate("managerId", "name phone").sort({ createdAt: 1 }).lean();
     return successResponse({
