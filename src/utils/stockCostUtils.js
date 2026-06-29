@@ -35,6 +35,14 @@ export function getOrderLineCost(product, item) {
   if (item.packagingUnitId) {
     return soldQty * resolveUnitCost(product, item.packagingUnitId);
   }
+  // Fallback for older orders missing packagingUnitId
+  if (item.conversionFactor > 1 && product.packagingUnits?.length) {
+    const pkg = product.packagingUnits.find((p) => p.qtyPerUnit === item.conversionFactor);
+    if (pkg) {
+      const unitCost = pkg.costPrice ?? (product.costPrice ?? 0) * pkg.qtyPerUnit;
+      return soldQty * unitCost;
+    }
+  }
   const baseQty = item.baseQty ?? item.qty ?? 0;
   return baseQty * (product.costPrice ?? 0);
 }

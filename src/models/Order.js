@@ -10,6 +10,7 @@ const orderItemSchema = new Schema(
     soldUnit: { type: String },
     soldQty: { type: Number },
     baseQty: { type: Number },
+    packagingUnitId: { type: Schema.Types.ObjectId, ref: "Unit" },
     conversionFactor: { type: Number, default: 1 },
     price: { type: Number, required: true },
     taxRate: { type: Number, default: 0 },

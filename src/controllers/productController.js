@@ -59,6 +59,16 @@ async function listProducts(req, res, next) {
       .limit(numLimit)
       .lean();
 
+    products.forEach(product => {
+      if (product.packagingUnits && product.packagingUnits.length > 0) {
+        product.packagingUnits.forEach(pkg => {
+          pkg.onHandBulkQty = (product.onHandQty != null && pkg.qtyPerUnit)
+            ? Math.floor(product.onHandQty / pkg.qtyPerUnit)
+            : 0;
+        });
+      }
+    });
+
     let meta = null;
     if (cursor !== undefined) {
       const hasNextPage = products.length === numLimit;
@@ -94,6 +104,15 @@ async function getProduct(req, res, next) {
       .populate({ path: "unitId", select: "name abbreviation key" })
       .populate({ path: "packagingUnits.unitId", select: "name abbreviation key" })
       .lean();
+    
+    if (product && product.packagingUnits && product.packagingUnits.length > 0) {
+      product.packagingUnits.forEach(pkg => {
+        pkg.onHandBulkQty = (product.onHandQty != null && pkg.qtyPerUnit)
+          ? Math.floor(product.onHandQty / pkg.qtyPerUnit)
+          : 0;
+      });
+    }
+
     if (!product) return errorResponse({
       res: res,
       statusCode: 404,
