@@ -57,6 +57,26 @@ async function buildAuthUserResponse(user, subscriptionOverrides = {}) {
     }
   }
 
+  const rolePerms = user.roleId?.permissions || [];
+  const customPerms = user.customPermissions || [];
+  const mergedMap = new Map();
+  const allPerms = [...rolePerms, ...customPerms];
+  
+  for (const p of allPerms) {
+    if (!mergedMap.has(p.module)) {
+      mergedMap.set(p.module, new Set(p.actions));
+    } else {
+      for (const a of p.actions) {
+        mergedMap.get(p.module).add(a);
+      }
+    }
+  }
+  
+  const permissions = [];
+  for (const [module, actionsSet] of mergedMap.entries()) {
+    permissions.push({ module, actions: Array.from(actionsSet) });
+  }
+
   return {
     id: user._id,
     name: user.name,
@@ -64,6 +84,9 @@ async function buildAuthUserResponse(user, subscriptionOverrides = {}) {
     businessId: user.businessId,
     outletId: primaryOutletId,
     outletIds: user.outletIds?.map((id) => id.toString()) || [],
+    customPermissions: user.customPermissions || [],
+    preferredLoginMethod: user.preferredLoginMethod || "password",
+    permissions,
     subscriptionStatus,
     trialEndsAt,
     trialExpired,
@@ -473,7 +496,7 @@ async function checkEmail(req, res, next) {
         });
       }
 
-      if (user.passwordHash) {
+      if (user.passwordHash && user.preferredLoginMethod !== "otp") {
         return successResponse({
           res: res,
 
@@ -760,7 +783,7 @@ async function createDefaultRoles(businessId, session = null) {
 async function setupPassword(req, res, next) {
   try {
     return await withTransaction(async (session) => {
-      const { newPassword, oldPassword } = req.body;
+      const { newPassword, oldPassword, preferredLoginMethod } = req.body;
       const user = await User.findById(req.user?.userId).session(session);
 
       if (!user) {
@@ -771,32 +794,39 @@ async function setupPassword(req, res, next) {
         });
       }
 
-      // If user already has a password, verify it first
-      if (user.passwordHash && !oldPassword) {
-        return errorResponse({
-          res,
-          statusCode: 400,
-          message: "Old password is required to change password"
-        });
+      if (preferredLoginMethod !== undefined) {
+        user.preferredLoginMethod = preferredLoginMethod;
       }
 
-      if (user.passwordHash && oldPassword) {
-        const isValid = await bcrypt.compare(oldPassword, user.passwordHash);
-        if (!isValid) {
+      if (newPassword) {
+        // If user already has a password, verify it first
+        if (user.passwordHash && !oldPassword) {
           return errorResponse({
             res,
             statusCode: 400,
-            message: "Incorrect old password"
+            message: "Old password is required to change password"
           });
         }
+
+        if (user.passwordHash && oldPassword) {
+          const isValid = await bcrypt.compare(oldPassword, user.passwordHash);
+          if (!isValid) {
+            return errorResponse({
+              res,
+              statusCode: 400,
+              message: "Incorrect old password"
+            });
+          }
+        }
+
+        user.passwordHash = await bcrypt.hash(newPassword, 10);
       }
 
-      user.passwordHash = await bcrypt.hash(newPassword, 10);
       await user.save({ session });
 
       return successResponse({
         res: res,
-        message: "Password set up successfully"
+        message: "Settings updated successfully"
       });
     });
   } catch (error) {

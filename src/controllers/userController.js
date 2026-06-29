@@ -24,7 +24,13 @@ async function listUsers(req, res, next) {
     if (businessId) query.businessId = businessId;
     if (outletId) query.outletIds = outletId;
     if (role) query.role = role;
-    if (isActive !== void 0) query.isActive = isActive === "true";
+    if (isActive !== void 0) {
+      if (isActive !== "all") {
+        query.isActive = isActive === "true";
+      }
+    } else {
+      query.isActive = true;
+    }
 
     const users = await User.find(query)
       .select("-passwordHash -inviteToken")
@@ -75,7 +81,7 @@ async function createUser(req, res, next) {
     if (!canAdd) return;
 
     const { businessId } = req.user;
-    const { name, phone, email, password, role, roleId, outletIds } = req.body;
+    const { name, phone, email, role, roleId, outletIds, customPermissions } = req.body;
 
     const existingPhone = await User.findOne({ phone });
     if (existingPhone) return errorResponse({
@@ -110,7 +116,6 @@ async function createUser(req, res, next) {
       }
     }
 
-    const passwordHash = await bcrypt.hash(password, 10);
     const user = await User.create({
       businessId,
       name,
@@ -119,9 +124,19 @@ async function createUser(req, res, next) {
       role: role || "staff",
       roleId: roleId || null,
       outletIds: outletIds || [],
-      passwordHash,
-      emailVerified: !!email
+      customPermissions: customPermissions || [],
+      passwordHash: null,
+      emailVerified: false
     });
+
+    if (email) {
+      const loginLink = `${process.env.FRONTEND_URL || "http://localhost:3000"}/login`;
+      try {
+        await mailer.sendInviteEmail(email, loginLink, name); // reusing invite email template for welcome
+      } catch (e) {
+        console.warn("Failed to send welcome email", e.message);
+      }
+    }
 
     await AuditLog.create({
       businessId,
@@ -152,7 +167,7 @@ async function createUser(req, res, next) {
 async function updateUser(req, res, next) {
   try {
     const { businessId } = req.user;
-    const allowed = ["name", "email", "role", "roleId", "outletIds", "isActive", "emailVerified"];
+    const allowed = ["name", "email", "role", "roleId", "outletIds", "isActive", "emailVerified", "customPermissions"];
     const update = {};
     for (const key of allowed) {
       if (req.body[key] !== void 0) update[key] = req.body[key];
@@ -227,7 +242,7 @@ async function deleteUser(req, res, next) {
 async function createInvite(req, res, next) {
   try {
     const { businessId } = req.user;
-    const { outletIds, roleId, role, name, phone, email } = req.body;
+    const { outletIds, roleId, role, name, phone, email, customPermissions } = req.body;
 
     if (roleId) {
       const targetRole = await Role.findOne({ _id: roleId, businessId }).lean();
@@ -256,6 +271,7 @@ async function createInvite(req, res, next) {
       name,
       phone,
       email: email?.toLowerCase(),
+      customPermissions: customPermissions || [],
       token,
       expiresAt,
       createdBy: req.user?.userId
@@ -353,6 +369,7 @@ async function acceptInvite(req, res, next) {
       role: invite.role,
       roleId: invite.roleId || null,
       outletIds: invite.outletIds || [],
+      customPermissions: invite.customPermissions || [],
       passwordHash,
       emailVerified: !!invite.email
     });

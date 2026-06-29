@@ -1,4 +1,5 @@
 import mongoose, { Schema } from "mongoose";
+import { permissionSchema } from "./Role.js";
 const userSchema = new Schema(
   {
     name: { type: String, required: true, trim: true },
@@ -13,6 +14,12 @@ const userSchema = new Schema(
       type: String,
       enum: ["superadmin", "owner", "manager", "staff"],
       default: "staff"
+    },
+    customPermissions: { type: [permissionSchema], default: [] },
+    preferredLoginMethod: {
+      type: String,
+      enum: ["password", "otp"],
+      default: "password"
     },
     isActive: { type: Boolean, default: true },
     inviteToken: { type: String },

@@ -32,8 +32,9 @@ export const resetPasswordSchema = z.object({
 });
 
 export const setupPasswordSchema = z.object({
-  newPassword: passwordSchema,
-  oldPassword: passwordSchema.optional()
+  newPassword: passwordSchema.optional(),
+  oldPassword: passwordSchema.optional(),
+  preferredLoginMethod: z.enum(["password", "otp"]).optional()
 });
 
 export const otpEmailSchema = z.object({
@@ -84,14 +85,20 @@ export const outletUpdateSchema = outletCreateSchema.extend({
   isActive: z.boolean().optional()
 }).partial();
 
+const permissionArraySchema = z.array(z.object({
+  module: z.string().trim().min(1),
+  actions: z.array(z.string().trim().min(1)).default([])
+})).optional();
+
 export const userCreateSchema = z.object({
   name: z.string().trim().min(2, "Name is required"),
   phone: phoneSchema,
-  email: emailSchema.optional(),
-  password: passwordSchema,
+  email: emailSchema,
+  password: passwordSchema.optional(),
   role: z.enum(["superadmin", "owner", "manager", "staff"]).optional(),
   roleId: z.string().trim().optional().nullable(),
-  outletIds: z.array(z.string().trim()).optional()
+  outletIds: z.array(z.string().trim()).optional(),
+  customPermissions: permissionArraySchema
 });
 
 export const userUpdateSchema = z.object({
@@ -102,7 +109,8 @@ export const userUpdateSchema = z.object({
   outletIds: z.array(z.string().trim()).optional(),
   isActive: z.boolean().optional(),
   emailVerified: z.boolean().optional(),
-  password: passwordSchema.optional()
+  password: passwordSchema.optional(),
+  customPermissions: permissionArraySchema
 });
 
 export const inviteCreateSchema = z.object({
@@ -111,7 +119,8 @@ export const inviteCreateSchema = z.object({
   role: z.enum(["manager", "staff"]).optional(),
   name: z.string().trim().min(2).optional(),
   phone: phoneSchema.optional(),
-  email: emailSchema.optional()
+  email: emailSchema.optional(),
+  customPermissions: permissionArraySchema
 });
 
 export const inviteAcceptSchema = z.object({
@@ -122,10 +131,7 @@ export const inviteAcceptSchema = z.object({
 export const roleCreateSchema = z.object({
   name: z.string().trim().min(2, "Role name is required"),
   description: z.string().trim().optional(),
-  permissions: z.array(z.object({
-    module: z.string().trim().min(1),
-    actions: z.array(z.string().trim().min(1)).default([])
-  })).optional(),
+  permissions: permissionArraySchema,
   outletScope: z.enum(["all", "restricted"]).optional(),
   outletIds: z.array(z.string().trim()).optional()
 });

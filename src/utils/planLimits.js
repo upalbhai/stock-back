@@ -15,7 +15,7 @@ export async function assertCanAddProduct(req, res) {
   const business = await getBusinessLimits(businessId);
   if (!business) return true;
 
-  const count = await Product.countDocuments({ businessId });
+  const count = await Product.countDocuments({ businessId, isActive: true });
   if (count >= business.maxProducts) {
     errorResponse({
       res,
@@ -34,7 +34,7 @@ export async function assertCanAddOutlet(req, res) {
   const business = await getBusinessLimits(businessId);
   if (!business) return true;
 
-  const count = await Outlet.countDocuments({ businessId });
+  const count = await Outlet.countDocuments({ businessId, isActive: true });
   if (count >= business.maxOutlets) {
     errorResponse({
       res,
@@ -53,7 +53,7 @@ export async function assertCanAddStaff(req, res) {
   const business = await getBusinessLimits(businessId);
   if (!business) return true;
 
-  const count = await User.countDocuments({ businessId, role: { $ne: "owner" } });
+  const count = await User.countDocuments({ businessId, role: { $ne: "owner" }, isActive: true });
   if (count >= business.maxStaff) {
     errorResponse({
       res,

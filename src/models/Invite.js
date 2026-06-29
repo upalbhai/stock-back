@@ -1,4 +1,5 @@
 import mongoose, { Schema } from "mongoose";
+import { permissionSchema } from "./Role.js";
 const inviteSchema = new Schema(
   {
     businessId: { type: Schema.Types.ObjectId, ref: "Business", required: true },
@@ -9,6 +10,7 @@ const inviteSchema = new Schema(
       enum: ["manager", "staff"],
       default: "staff"
     },
+    customPermissions: { type: [permissionSchema], default: [] },
     phone: { type: String },
     email: { type: String, lowercase: true, trim: true },
     // pre-filled on invite form

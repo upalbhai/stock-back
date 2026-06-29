@@ -64,5 +64,6 @@ const Role = mongoose.models.Role || mongoose.model("Role", roleSchema);
 export {
   ACTIONS,
   MODULES,
-  Role
+  Role,
+  permissionSchema
 };

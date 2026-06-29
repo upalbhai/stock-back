@@ -4,10 +4,36 @@ import { Role } from "../models/Role.js";
 export async function getRequesterPermissions(req) {
   if (req.user?.role === "superadmin") return null;
   if (req.user?.role === "owner" && !req.user?.roleId) return null;
-  const roleId = req.user?.roleId;
-  if (!roleId) return [];
-  const role = await Role.findById(roleId).lean();
-  return role?.permissions || [];
+  
+  const userId = req.user?.userId;
+  if (!userId) return [];
+  
+  const { User } = await import("../models/User.js");
+  const user = await User.findById(userId).populate("roleId").lean();
+  if (!user) return [];
+
+  const rolePerms = user.roleId?.permissions || [];
+  const customPerms = user.customPermissions || [];
+  
+  // Merge them
+  const mergedMap = new Map();
+  const allPerms = [...rolePerms, ...customPerms];
+  
+  for (const p of allPerms) {
+    if (!mergedMap.has(p.module)) {
+      mergedMap.set(p.module, new Set(p.actions));
+    } else {
+      for (const a of p.actions) {
+        mergedMap.get(p.module).add(a);
+      }
+    }
+  }
+  
+  const result = [];
+  for (const [module, actionsSet] of mergedMap.entries()) {
+    result.push({ module, actions: Array.from(actionsSet) });
+  }
+  return result;
 }
 
 function normalizePerms(perms) {

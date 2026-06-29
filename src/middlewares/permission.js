@@ -3,7 +3,6 @@ function requirePermission(module, action) {
   return async (req, res, next) => {
     try {
       const userId = req.user?.userId;
-      console.log('user', req.user)
       if (!userId) {
         return res.status(401).json({ message: "Unauthorized" });
       }
@@ -13,22 +12,46 @@ function requirePermission(module, action) {
       if (req.user?.role === "owner") {
         return next();
       }
-      const roleId = req.user?.roleId;
-      if (!roleId) {
-        return res.status(403).json({ message: "No role assigned" });
+      
+      const { User } = await import("../models/User.js");
+      const user = await User.findById(userId).populate("roleId").lean();
+      
+      if (!user) {
+        return res.status(401).json({ message: "User not found" });
       }
-      const role = await Role.findById(roleId).lean();
-      if (!role) {
-        return res.status(403).json({ message: "Role not found" });
+
+      let hasPermission = false;
+      let outletScope = "all";
+      let roleOutletIds = [];
+
+      // Check role permissions first
+      if (user.roleId) {
+        const role = user.roleId;
+        outletScope = role.outletScope || "all";
+        roleOutletIds = role.outletIds || [];
+        const rolePerm = role.permissions?.find((p) => p.module === module);
+        if (rolePerm && rolePerm.actions.includes(action)) {
+          hasPermission = true;
+        }
       }
-      const perm = role.permissions.find((p) => p.module === module);
-      if (!perm || !perm.actions.includes(action)) {
+
+      // Check custom user permissions
+      if (!hasPermission && user.customPermissions) {
+        const customPerm = user.customPermissions.find((p) => p.module === module);
+        if (customPerm && customPerm.actions.includes(action)) {
+          hasPermission = true;
+        }
+      }
+
+      // If neither role nor user custom permissions grant access
+      if (!hasPermission) {
         return res.status(403).json({ message: `Permission denied: ${module}:${action}` });
       }
-      if (role.outletScope === "restricted" && role.outletIds?.length) {
+
+      if (outletScope === "restricted" && roleOutletIds?.length) {
         const requestedOutletId = req.query.outletId || req.body?.outletId || req.params?.outletId;
         if (requestedOutletId) {
-          const allowed = role.outletIds.map((id) => id.toString()).includes(requestedOutletId);
+          const allowed = roleOutletIds.map((id) => id.toString()).includes(requestedOutletId);
           if (!allowed) {
             return res.status(403).json({ message: "Outlet access denied for this role" });
           }
