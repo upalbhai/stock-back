@@ -844,5 +844,6 @@ export {
   verifyLoginOtp,
   forgotPassword,
   resetPassword,
-  setupPassword
+  setupPassword,
+  buildAuthUserResponse
 };

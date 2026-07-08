@@ -106,12 +106,12 @@ function todayRange() {
 async function getDailyReport(req, res, next) {
   try {
     const { businessId } = req.user;
-    const { outletId, date } = req.query;
+    const { outletId, from, to } = req.query;
     let start, end;
-    if (date) {
-      start = new Date(date);
+    if (from && to) {
+      start = new Date(from);
       start.setHours(0, 0, 0, 0);
-      end = new Date(date);
+      end = new Date(to);
       end.setHours(23, 59, 59, 999);
     } else {
       ({ start, end } = todayRange());
@@ -243,8 +243,16 @@ async function getRevenueTrend(req, res, next) {
 async function getWholesaleSummary(req, res, next) {
   try {
     const { businessId } = req.user;
-    const { outletId } = req.query;
-    const { start, end } = todayRange();
+    const { outletId, from, to } = req.query;
+    let start, end;
+    if (from && to) {
+      start = new Date(from);
+      start.setHours(0, 0, 0, 0);
+      end = new Date(to);
+      end.setHours(23, 59, 59, 999);
+    } else {
+      ({ start, end } = todayRange());
+    }
 
     const customerMatch = { businessId, isActive: true };
     const creditAgg = await Customer.aggregate([

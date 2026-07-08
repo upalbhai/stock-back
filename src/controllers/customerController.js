@@ -8,7 +8,7 @@ import { applyCustomerCredit } from "../utils/customerLedger.js";
 async function listCustomers(req, res, next) {
   try {
     const { businessId } = req.user;
-    const { outletId, search, hasBalance, page = 1, limit = 50 } = req.query;
+    const { outletId, search, hasBalance, from, to, page = 1, limit = 50 } = req.query;
     const conditions = [{ businessId, isActive: true }];
 
     if (outletId) {
@@ -24,6 +24,14 @@ async function listCustomers(req, res, next) {
           { phone: { $regex: search, $options: "i" } },
           { gstin: { $regex: search, $options: "i" } }
         ]
+      });
+    }
+    if (from || to) {
+      conditions.push({
+        createdAt: {
+          ...(from && { $gte: new Date(from) }),
+          ...(to && { $lte: new Date(to) })
+        }
       });
     }
 
@@ -173,7 +181,7 @@ async function updateCustomer(req, res, next) {
 async function getCustomerLedger(req, res, next) {
   try {
     const { businessId } = req.user;
-    const { page = 1, limit = 50, recordStatus = "active" } = req.query;
+    const { page = 1, limit = 50, recordStatus = "active", from, to } = req.query;
 
     const customer = await Customer.findOne({ _id: req.params.id, businessId, isActive: true }).lean();
     if (!customer) {
@@ -183,6 +191,12 @@ async function getCustomerLedger(req, res, next) {
     const txQuery = { businessId, customerId: customer._id };
     if (recordStatus === "active") txQuery.status = { $ne: "voided" };
     else if (recordStatus === "voided") txQuery.status = "voided";
+    
+    if (from || to) {
+      txQuery.createdAt = {};
+      if (from) txQuery.createdAt.$gte = new Date(from);
+      if (to) txQuery.createdAt.$lte = new Date(to);
+    }
 
     const skip = (Number(page) - 1) * Number(limit);
     const [transactions, total] = await Promise.all([

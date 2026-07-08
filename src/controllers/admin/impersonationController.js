@@ -4,11 +4,12 @@ import { User } from "../../models/User.js";
 import { AuditLog } from "../../models/AuditLog.js";
 import jwt from "jsonwebtoken";
 import { env } from "../../config/env.js";
+import { buildAuthUserResponse } from "../authController.js";
 
 async function adminImpersonate(req, res, next) {
   try {
     const { targetUserId } = req.body;
-    const targetUser = await User.findById(targetUserId).lean();
+    const targetUser = await User.findById(targetUserId).populate("roleId").lean();
     if (!targetUser) return errorResponse({
       res: res,
       statusCode: 404,
@@ -38,7 +39,7 @@ async function adminImpersonate(req, res, next) {
       res: res,
       data: {
         token,
-        user: { id: targetUser._id, name: targetUser.name, role: targetUser.role, businessId: targetUser.businessId },
+        user: await buildAuthUserResponse(targetUser),
         impersonating: true,
         originalAdminId: req.user?.userId
       }
