@@ -31,7 +31,16 @@ function makeOutletCode(name) {
 }
 
 async function buildAuthUserResponse(user, subscriptionOverrides = {}) {
-  const primaryOutletId = user.outletIds?.[0]?.toString() || undefined;
+  let primaryOutletId = user.outletIds?.[0]?.toString() || undefined;
+  let resolvedOutletIds = user.outletIds?.map((id) => id.toString()) || [];
+
+  if (!primaryOutletId && user.businessId) {
+    const firstOutlet = await Outlet.findOne({ businessId: user.businessId }).lean();
+    if (firstOutlet) {
+      primaryOutletId = firstOutlet._id.toString();
+      resolvedOutletIds = [primaryOutletId];
+    }
+  }
   let subscriptionStatus = subscriptionOverrides.subscriptionStatus ?? null;
   let trialEndsAt = subscriptionOverrides.trialEndsAt ?? null;
   let trialExpired = subscriptionOverrides.trialExpired ?? false;
@@ -83,7 +92,7 @@ async function buildAuthUserResponse(user, subscriptionOverrides = {}) {
     role: user.role,
     businessId: user.businessId,
     outletId: primaryOutletId,
-    outletIds: user.outletIds?.map((id) => id.toString()) || [],
+    outletIds: resolvedOutletIds,
     customPermissions: user.customPermissions || [],
     preferredLoginMethod: user.preferredLoginMethod || "password",
     permissions,

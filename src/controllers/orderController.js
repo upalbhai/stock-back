@@ -374,6 +374,17 @@ async function listOrders(req, res, next) {
     } else {
       Object.assign(query, buildOrderRecordStatusFilter(recordStatus));
     }
+    
+    if (req.query.search) {
+      const q = req.query.search.trim();
+      if (q) {
+        query.$or = [
+          { orderNumber: { $regex: q, $options: "i" } },
+          { customerName: { $regex: q, $options: "i" } },
+          { customerPhone: { $regex: q, $options: "i" } }
+        ];
+      }
+    }
     if (from || to) {
       query.createdAt = {};
       if (from) query.createdAt.$gte = new Date(from);
