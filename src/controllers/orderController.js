@@ -273,13 +273,22 @@ async function createOrder(req, res, next) {
     }).save({ session });
 
     if (payment && amountPaid > 0) {
+      let finalSplit = { ...payment.split };
+      if (payment.method === "split") {
+        const splitSum = Object.values(finalSplit).reduce((s, v) => s + (Number(v) || 0), 0);
+        if (splitSum > amountPaid) {
+          const diff = splitSum - amountPaid;
+          finalSplit.cash = (Number(finalSplit.cash) || 0) - diff;
+        }
+      }
+
       const pmnt = await new Payment({
         businessId,
         outletId,
         orderId: order._id,
         method: payment.method === "credit" ? "cash" : payment.method || "cash",
         amount: amountPaid,
-        split: payment.split || {},
+        split: finalSplit,
         receivedBy: userId
       }).save({ session });
       await Order.findByIdAndUpdate(order._id, { $push: { payments: pmnt._id } }, { session });
@@ -305,7 +314,12 @@ async function createOrder(req, res, next) {
         if (product) {
           const qtyBefore = product.onHandQty;
           const qtyAfter = qtyBefore - stockQty;
-          const lineRevenue = item.lineTotal ?? 0;
+          const lineRevenueRaw = item.lineTotal ?? 0;
+          let lineDiscount = 0;
+          if (subtotal > 0 && discountAmount > 0) {
+            lineDiscount = discountAmount * (lineRevenueRaw / subtotal);
+          }
+          const lineRevenue = lineRevenueRaw - lineDiscount;
           const lineCost = getOrderLineCost(product, item);
           await Product.findByIdAndUpdate(item.productId, { $inc: { onHandQty: -stockQty } }, { session });
           await new StockEntry({
@@ -391,21 +405,43 @@ async function listOrders(req, res, next) {
       if (to) query.createdAt.$lte = new Date(to);
     }
     const skip = (Number(page) - 1) * Number(limit);
-    const [orders, total] = await Promise.all([
+    const [orders, total, orderIds] = await Promise.all([
       Order.find(query)
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(Number(limit))
+        .populate("payments")
         .populate("createdBy", "name")
         .populate("voidedBy", "name")
         .populate("refundedBy", "name")
         .lean(),
-      Order.countDocuments(query)
+      Order.countDocuments(query),
+      Order.find(query).distinct("_id")
     ]);
+    
+    const paymentsRaw = await Payment.find({ orderId: { $in: orderIds } }).lean();
+    const payMap = { cash: 0, upi: 0, card: 0, wallet: 0 };
+    
+    for (const p of paymentsRaw) {
+      if (p.method === "split" && p.split) {
+        payMap.cash += Number(p.split.cash) || 0;
+        payMap.upi += Number(p.split.upi) || 0;
+        payMap.card += Number(p.split.card) || 0;
+        payMap.wallet += Number(p.split.wallet) || 0;
+      } else if (p.method && p.method !== "credit") {
+        payMap[p.method] = (payMap[p.method] || 0) + (Number(p.amount) || 0);
+      }
+    }
+    
+    const payments = Object.entries(payMap)
+      .filter(([_, amount]) => amount > 0)
+      .map(([payment_type, amount]) => ({ payment_type, amount }));
+
     return successResponse({
       res: res,
       data: {
         orders,
+        payments,
         total,
         page: Number(page),
         pages: Math.ceil(total / Number(limit))

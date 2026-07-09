@@ -30,7 +30,7 @@ async function computeSalesFromOrders(businessId, { outletId, from, to }) {
   if (createdAt) orderQuery.createdAt = createdAt;
 
   const orders = await Order.find(orderQuery)
-    .select("items total subtotal orderNumber createdAt outletId createdBy")
+    .select("items total subtotal discount orderNumber createdAt outletId createdBy")
     .populate("createdBy", "name")
     .lean();
 
@@ -50,9 +50,18 @@ async function computeSalesFromOrders(businessId, { outletId, from, to }) {
   let realizedCost = 0;
 
   for (const order of orders) {
+    const orderDiscount = order.discount || 0;
+    const orderSubtotal = order.subtotal || order.items.reduce((s, i) => s + (i.lineTotal ?? (i.price * (i.qty || 0))), 0);
+
     for (const item of order.items || []) {
-      const lineRevenue = item.lineTotal ?? item.price * (item.qty || 0);
-      realizedRevenue += lineRevenue;
+      const lineRevenueRaw = item.lineTotal ?? item.price * (item.qty || 0);
+      let lineDiscount = 0;
+      if (orderSubtotal > 0 && orderDiscount > 0) {
+        lineDiscount = orderDiscount * (lineRevenueRaw / orderSubtotal);
+      }
+      const lineRevenueNet = lineRevenueRaw - lineDiscount;
+
+      realizedRevenue += lineRevenueNet;
       if (item.productId) {
         const product = productMap.get(item.productId.toString());
         realizedCost += getOrderLineCost(product, item);
@@ -71,7 +80,6 @@ async function computeSalesFromOrders(businessId, { outletId, from, to }) {
 
 function enrichSaleEntry(entry, orderMap, productMap) {
   if (entry.type !== "sale") return entry;
-  if (entry.realizedRevenue != null && entry.realizedRevenue > 0) return entry;
 
   const orderId = entry.referenceId?.toString?.() || String(entry.referenceId || "");
   const order = orderMap.get(orderId);
@@ -84,14 +92,23 @@ function enrichSaleEntry(entry, orderMap, productMap) {
   if (!item) return entry;
 
   const product = productMap.get(productId) || entry.productId;
-  const lineRevenue = item.lineTotal ?? item.price * (item.qty || 0);
+  const lineRevenueRaw = item.lineTotal ?? item.price * (item.qty || 0);
+  
+  const orderDiscount = order.discount || 0;
+  const orderSubtotal = order.subtotal || order.items.reduce((s, i) => s + (i.lineTotal ?? (i.price * (i.qty || 0))), 0);
+  let lineDiscount = 0;
+  if (orderSubtotal > 0 && orderDiscount > 0) {
+    lineDiscount = orderDiscount * (lineRevenueRaw / orderSubtotal);
+  }
+  const lineRevenueNet = lineRevenueRaw - lineDiscount;
+  
   const lineCost = getOrderLineCost(product, item);
 
   return {
     ...entry,
-    realizedRevenue: lineRevenue,
+    realizedRevenue: lineRevenueNet,
     realizedCost: lineCost,
-    realizedProfit: lineRevenue - lineCost,
+    realizedProfit: lineRevenueNet - lineCost,
     note: entry.note || `Order ${order.orderNumber}`
   };
 }
@@ -123,8 +140,7 @@ async function getDailyReport(req, res, next) {
     const totalOrders = orders.length;
     const paymentSummary = { cash: 0, upi: 0, card: 0, wallet: 0, split: 0 };
     for (const order of orders) {
-      for (const pmtId of order.payments) {
-        const pmt = order.payments.find((p) => p._id.toString() === pmtId?.toString());
+      for (const pmt of order.payments) {
         if (pmt && typeof pmt === "object" && "method" in pmt) {
           const method = pmt.method;
           paymentSummary[method] = (paymentSummary[method] || 0) + pmt.amount;

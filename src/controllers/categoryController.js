@@ -129,10 +129,15 @@ async function updateCategory(req, res, next) {
 async function deleteCategory(req, res, next) {
   try {
     const { businessId } = req.user;
-    await Category.findOneAndUpdate(
-      { _id: req.params.id, businessId },
-      { $set: { isActive: false } }
-    );
+    const category = await Category.findOne({ _id: req.params.id, businessId });
+    if (!category) {
+      return errorResponse({ res: res, statusCode: 404, message: "Category not found" });
+    }
+
+    category.isActive = false;
+    category.slug = `${category.slug}-deleted-${Date.now()}`;
+    await category.save();
+
     return successResponse({
       res: res,
       message: "Category deactivated"

@@ -461,8 +461,8 @@ async function deleteStockEntry(req, res, next) {
       const entry = await StockEntry.findOne({ _id: req.params.id, businessId }).session(session);
       if (!entry) return errorResponse({ res, statusCode: 404, message: "Entry not found" });
 
-      if (!["wastage", "adjustment"].includes(entry.type)) {
-        return errorResponse({ res, statusCode: 400, message: "Only manual stock adjustments can be deleted" });
+      if (entry.referenceType || !["purchase", "opening", "wastage", "adjustment", "return"].includes(entry.type)) {
+        return errorResponse({ res, statusCode: 400, message: "Only manual stock entries can be deleted" });
       }
 
       const product = await Product.findOne({ _id: entry.productId, businessId }).session(session);
