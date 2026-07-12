@@ -10,19 +10,37 @@ function makeCode(name) {
 async function listOutlets(req, res, next) {
   try {
     const { businessId, role, outletIds } = req.user;
-    let query = { businessId };
+    const { page = 1, limit = 50, search } = req.query;
+    const numPage = parseInt(page, 10);
+    const numLimit = parseInt(limit, 10);
+
+    let query = { businessId, status: { $ne: "deleted" } };
     if (role !== "owner" && role !== "superadmin") {
       query.isActive = true;
       if (outletIds?.length) {
         query._id = { $in: outletIds };
       }
     }
-    const outlets = await Outlet.find(query).populate("managerId", "name phone").sort({ createdAt: 1 }).lean();
+    if (search) {
+      query.name = { $regex: search, $options: "i" };
+    }
+
+    const skip = (numPage - 1) * numLimit;
+    const [outlets, total] = await Promise.all([
+      Outlet.find(query).populate("managerId", "name phone").sort({ createdAt: 1 }).skip(skip).limit(numLimit).lean(),
+      Outlet.countDocuments(query)
+    ]);
+
     return successResponse({
       res: res,
-
-      data: {
-        outlets
+      data: { outlets },
+      meta: {
+        pagination: {
+          page: numPage,
+          limit: numLimit,
+          total,
+          totalPages: Math.ceil(total / numLimit) || 1
+        }
       }
     });
   } catch (error) {
@@ -123,7 +141,7 @@ async function deleteOutlet(req, res, next) {
     const { businessId } = req.user;
     const outlet = await Outlet.findOneAndUpdate(
       { _id: req.params.id, businessId },
-      { $set: { isActive: false } },
+      { $set: { isActive: false, status: "deleted" } },
       { new: true }
     );
     if (!outlet) return errorResponse({

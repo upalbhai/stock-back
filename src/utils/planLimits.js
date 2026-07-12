@@ -35,6 +35,7 @@ export async function assertCanAddOutlet(req, res) {
   if (!business) return true;
 
   const count = await Outlet.countDocuments({ businessId, isActive: true });
+  console.log('business', business)
   if (count >= business.maxOutlets) {
     errorResponse({
       res,

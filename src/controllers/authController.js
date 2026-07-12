@@ -86,6 +86,11 @@ async function buildAuthUserResponse(user, subscriptionOverrides = {}) {
     permissions.push({ module, actions: Array.from(actionsSet) });
   }
 
+  let outlets = [];
+  if (user.businessId) {
+    outlets = await Outlet.find({ businessId: user.businessId, isActive: true, status: "active" }).lean();
+  }
+
   return {
     id: user._id,
     name: user.name,
@@ -101,7 +106,8 @@ async function buildAuthUserResponse(user, subscriptionOverrides = {}) {
     trialExpired,
     enabledFeatures,
     businessProfile,
-    planType
+    planType,
+    outlets
   };
 }
 
