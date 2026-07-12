@@ -9,9 +9,20 @@ function makeSlug(name, businessId) {
 async function listCategories(req, res, next) {
   try {
     const { businessId } = req.user;
-    const { outletId, flat, page = 1, limit = 50 } = req.query;
+    const { outletId, flat, page = 1, limit = 50, search } = req.query;
+    const term = String(search || "").trim();
+    
     const query = { businessId, isActive: true };
-    if (outletId) query.$or = [{ outletId }, { outletId: null }];
+    const and = [];
+    if (outletId) and.push({ $or: [{ outletId }, { outletId: null }] });
+    if (term) {
+      and.push({
+        $or: [
+          { name: { $regex: term, $options: "i" } }
+        ]
+      });
+    }
+    if (and.length) query.$and = and;
 
     // If flat=true, return a flat list with pagination like products
     if (flat === "true") {

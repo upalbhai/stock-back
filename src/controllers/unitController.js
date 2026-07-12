@@ -10,8 +10,8 @@ function makeKey(name, businessId) {
 async function listUnits(req, res, next) {
   try {
     const { businessId } = req.user;
-    const { outletId, flat, page = 1, limit = 50, q, search } = req.query;
-    const term = String(q || search || "").trim();
+    const { outletId, flat, page = 1, limit = 50, search } = req.query;
+    const term = String(search || "").trim();
     const query = { businessId, isActive: true };
     const and = [];
     if (outletId) and.push({ $or: [{ outletId }, { outletId: null }] });
