@@ -1,6 +1,7 @@
 import { successResponse } from "../utils/successResponse.js";
 import { errorResponse } from "../utils/errorResponse.js";
 import { Product } from "../models/Product.js";
+import { Inventory } from "../models/Inventory.js";
 import { StockEntry } from "../models/StockEntry.js";
 import { StockTransfer } from "../models/StockTransfer.js";
 import { AuditLog } from "../models/AuditLog.js";
@@ -13,10 +14,10 @@ async function getStockSummary(req, res, next) {
     const { outletId } = req.query;
     const query = { businessId, isActive: true };
     if (outletId) query.outletId = outletId;
-    const products = await Product.find(query).select("onHandQty lowStockThreshold").lean();
-    const totalSkus = products.length;
-    const onHandTotal = products.reduce((sum, p) => sum + p.onHandQty, 0);
-    const lowStock = products.filter((p) => p.onHandQty <= p.lowStockThreshold).length;
+    const inventory = await Inventory.find(query).select("onHandQty lowStockThreshold").lean();
+    const totalSkus = inventory.length;
+    const onHandTotal = inventory.reduce((sum, p) => sum + (p.onHandQty || 0), 0);
+    const lowStock = inventory.filter((p) => p.onHandQty <= p.lowStockThreshold).length;
     return successResponse({
       res: res,
       data: { totalSkus, onHandTotal, lowStock }
@@ -25,13 +26,34 @@ async function getStockSummary(req, res, next) {
     return next(error);
   }
 }
+
 async function getStockAlerts(req, res, next) {
   try {
     const { businessId } = req.user;
     const { outletId } = req.query;
     const query = { businessId, isActive: true };
     if (outletId) query.outletId = outletId;
-    const products = await Product.find(query).select("name onHandQty lowStockThreshold unit categoryId").populate("categoryId", "name icon").lean();
+    
+    const inventory = await Inventory.find(query)
+      .populate({
+        path: "productId",
+        select: "name unit categoryId",
+        populate: { path: "categoryId", select: "name icon" }
+      })
+      .lean();
+      
+    // Format to match old shape
+    const products = inventory
+      .filter(i => i.productId != null)
+      .map(i => ({
+        _id: i.productId._id,
+        name: i.productId.name,
+        unit: i.productId.unit,
+        categoryId: i.productId.categoryId,
+        onHandQty: i.onHandQty,
+        lowStockThreshold: i.lowStockThreshold
+      }));
+
     const alerts = products.filter((p) => p.onHandQty <= p.lowStockThreshold);
     return successResponse({
       res: res,
@@ -41,6 +63,7 @@ async function getStockAlerts(req, res, next) {
     return next(error);
   }
 }
+
 async function buildStockHistoryQuery(businessId, params) {
   const { productId, outletId, type, direction, search, startDate, endDate } = params;
   const query = { businessId };
@@ -138,6 +161,7 @@ async function getStockHistory(req, res, next) {
     return next(error);
   }
 }
+
 async function applyProductPriceUpdate(product, { soldUnitCost, soldUnitPrice, packagingUnitId, session }) {
   if (soldUnitCost == null && soldUnitPrice == null) return;
 
@@ -186,12 +210,12 @@ async function adjustStock(req, res, next) {
         lossReason
       } = req.body;
       const product = await Product.findOne({ _id: productId, businessId }).session(session);
-      if (!product) return errorResponse({
-        res: res,
-        statusCode: 404,
-        message: "Product not found"
-      });
-      const qtyBefore = product.onHandQty;
+      if (!product) return errorResponse({ res: res, statusCode: 404, message: "Product not found" });
+      
+      const inventory = await Inventory.findOne({ productId, outletId, businessId }).session(session);
+      if (!inventory) return errorResponse({ res: res, statusCode: 404, message: "Inventory record not found" });
+
+      const qtyBefore = inventory.onHandQty;
       const entryType = type || "adjustment";
       const qtyDelta = entryType === "adjustment" ? qty - qtyBefore : qty;
       const qtyAfter = entryType === "adjustment" ? qty : qtyBefore + qty;
@@ -227,7 +251,7 @@ async function adjustStock(req, res, next) {
         else if (entryType === "wastage") priceMeta.lossReason = "spoilage";
       }
 
-      await Product.findByIdAndUpdate(productId, { onHandQty: qtyAfter }, { session });
+      await Inventory.findByIdAndUpdate(inventory._id, { onHandQty: qtyAfter }, { session });
 
       if (updateProductPrices && isStockIn) {
         await applyProductPriceUpdate(product, {
@@ -251,6 +275,7 @@ async function adjustStock(req, res, next) {
         ...packagingMeta,
         ...priceMeta
       }).save({ session });
+      
       await new AuditLog({
         businessId,
         outletId,
@@ -263,11 +288,11 @@ async function adjustStock(req, res, next) {
         message: `Stock adjusted: ${product.name} ${qtyBefore}\u2192${qtyAfter}`,
         ip: req.ip
       }).save({ session });
+      
       return successResponse({
         res: res,
-
         data: {
-          product: await Product.findById(productId).session(session).lean()
+          product: { ...(await Product.findById(productId).session(session).lean()), onHandQty: qtyAfter }
         }
       });
     });
@@ -275,6 +300,7 @@ async function adjustStock(req, res, next) {
     return next(error);
   }
 }
+
 async function createTransfer(req, res, next) {
   try {
     return await withTransaction(async (session) => {
@@ -292,37 +318,28 @@ async function createTransfer(req, res, next) {
       return successResponse({
         res: res,
         statusCode: 201,
-
-        data: {
-          transfer
-        }
+        data: { transfer }
       });
     });
   } catch (error) {
     return next(error);
   }
 }
+
 async function approveTransfer(req, res, next) {
   try {
     return await withTransaction(async (session) => {
       const { businessId, userId } = req.user;
       const transfer = await StockTransfer.findOne({ _id: req.params.id, businessId }).session(session);
-      if (!transfer) return errorResponse({
-        res: res,
-        statusCode: 404,
-        message: "Transfer not found"
-      });
-      if (transfer.status !== "pending") return errorResponse({
-        res: res,
-        statusCode: 400,
-        message: "Already processed"
-      });
+      if (!transfer) return errorResponse({ res: res, statusCode: 404, message: "Transfer not found" });
+      if (transfer.status !== "pending") return errorResponse({ res: res, statusCode: 400, message: "Already processed" });
+      
       for (const item of transfer.items) {
-        const src = await Product.findOne({ _id: item.productId, outletId: transfer.fromOutletId }).session(session);
+        const src = await Inventory.findOne({ productId: item.productId, outletId: transfer.fromOutletId }).session(session);
         if (src) {
           const qb = src.onHandQty;
           const qa = qb - item.qty;
-          await Product.findByIdAndUpdate(src._id, { $inc: { onHandQty: -item.qty } }, { session });
+          await Inventory.findByIdAndUpdate(src._id, { $inc: { onHandQty: -item.qty } }, { session });
           await new StockEntry({
             businessId,
             outletId: transfer.fromOutletId,
@@ -336,11 +353,12 @@ async function approveTransfer(req, res, next) {
             createdBy: userId
           }).save({ session });
         }
-        const dst = await Product.findOne({ _id: item.productId, outletId: transfer.toOutletId }).session(session);
+        
+        let dst = await Inventory.findOne({ productId: item.productId, outletId: transfer.toOutletId }).session(session);
         if (dst) {
           const qb = dst.onHandQty;
           const qa = qb + item.qty;
-          await Product.findByIdAndUpdate(dst._id, { $inc: { onHandQty: item.qty } }, { session });
+          await Inventory.findByIdAndUpdate(dst._id, { $inc: { onHandQty: item.qty } }, { session });
           await new StockEntry({
             businessId,
             outletId: transfer.toOutletId,
@@ -353,6 +371,14 @@ async function approveTransfer(req, res, next) {
             referenceType: "StockTransfer",
             createdBy: userId
           }).save({ session });
+        } else {
+          // If dst doesn't have the product, import it
+          await new Inventory({
+            businessId, outletId: transfer.toOutletId, productId: item.productId, onHandQty: item.qty, lowStockThreshold: 10
+          }).save({ session });
+          await new StockEntry({
+            businessId, outletId: transfer.toOutletId, productId: item.productId, type: "transfer_in", qty: item.qty, qtyBefore: 0, qtyAfter: item.qty, referenceId: transfer._id, referenceType: "StockTransfer", createdBy: userId
+          }).save({ session });
         }
       }
       await StockTransfer.findByIdAndUpdate(transfer._id, {
@@ -361,15 +387,13 @@ async function approveTransfer(req, res, next) {
         approvedAt: new Date(),
         completedAt: new Date()
       }, { session });
-      return successResponse({
-        res: res,
-        message: "Transfer completed"
-      });
+      return successResponse({ res: res, message: "Transfer completed" });
     });
   } catch (error) {
     return next(error);
   }
 }
+
 async function listTransfers(req, res, next) {
   try {
     const { businessId } = req.user;
@@ -386,18 +410,12 @@ async function listTransfers(req, res, next) {
         .lean(),
       StockTransfer.countDocuments({ businessId })
     ]);
-    return successResponse({
-      res: res,
-
-      data: {
-        transfers,
-        total
-      }
-    });
+    return successResponse({ res: res, data: { transfers, total } });
   } catch (error) {
     return next(error);
   }
 }
+
 async function updateStockEntry(req, res, next) {
   try {
     return await withTransaction(async (session) => {
@@ -406,7 +424,6 @@ async function updateStockEntry(req, res, next) {
       const entry = await StockEntry.findOne({ _id: req.params.id, businessId }).session(session);
       if (!entry) return errorResponse({ res, statusCode: 404, message: "Entry not found" });
 
-      // Only allow editing manual adjustments
       if (!["wastage", "adjustment"].includes(entry.type)) {
         return errorResponse({ res, statusCode: 400, message: "Only manual stock adjustments can be edited" });
       }
@@ -414,9 +431,12 @@ async function updateStockEntry(req, res, next) {
       const product = await Product.findOne({ _id: entry.productId, businessId }).session(session);
       if (!product) return errorResponse({ res, statusCode: 404, message: "Product not found" });
 
+      const inventory = await Inventory.findOne({ productId: entry.productId, outletId: entry.outletId, businessId }).session(session);
+      if (!inventory) return errorResponse({ res, statusCode: 404, message: "Inventory record not found" });
+
       const qtyBefore = entry.qty;
       const qtyDelta = qty - qtyBefore;
-      const newOnHand = product.onHandQty + qtyDelta;
+      const newOnHand = inventory.onHandQty + qtyDelta;
 
       const isLoss = qty < 0;
       const unitCost = entry.soldUnitCost || resolveUnitCost(product, entry.packagingUnitId);
@@ -425,7 +445,7 @@ async function updateStockEntry(req, res, next) {
       const costLoss = isLoss ? count * unitCost : 0;
       const expectedProfit = (!isLoss && (entry.soldUnitPrice != null)) ? (count * entry.soldUnitPrice) - (count * unitCost) : 0;
 
-      await Product.findByIdAndUpdate(product._id, { onHandQty: newOnHand }, { session });
+      await Inventory.findByIdAndUpdate(inventory._id, { onHandQty: newOnHand }, { session });
 
       entry.qty = qty;
       entry.qtyAfter = entry.qtyBefore + qty;
@@ -437,14 +457,7 @@ async function updateStockEntry(req, res, next) {
       await entry.save({ session });
 
       await new AuditLog({
-        businessId,
-        actorId: userId,
-        module: "inventory",
-        action: "update_stock_entry",
-        targetType: "StockEntry",
-        targetId: entry._id,
-        message: `Stock entry edited. Qty changed from ${qtyBefore} to ${qty}. Product on-hand: ${newOnHand}`,
-        ip: req.ip
+        businessId, actorId: userId, module: "inventory", action: "update_stock_entry", targetType: "StockEntry", targetId: entry._id, message: `Stock entry edited. Qty changed from ${qtyBefore} to ${qty}. Product on-hand: ${newOnHand}`, ip: req.ip
       }).save({ session });
 
       return successResponse({ res, message: "Stock entry updated successfully" });
@@ -465,20 +478,13 @@ async function deleteStockEntry(req, res, next) {
         return errorResponse({ res, statusCode: 400, message: "Only manual stock entries can be deleted" });
       }
 
-      const product = await Product.findOne({ _id: entry.productId, businessId }).session(session);
-      if (product) {
-        const newOnHand = product.onHandQty - entry.qty;
-        await Product.findByIdAndUpdate(product._id, { onHandQty: newOnHand }, { session });
+      const inventory = await Inventory.findOne({ productId: entry.productId, outletId: entry.outletId, businessId }).session(session);
+      if (inventory) {
+        const newOnHand = inventory.onHandQty - entry.qty;
+        await Inventory.findByIdAndUpdate(inventory._id, { onHandQty: newOnHand }, { session });
         
         await new AuditLog({
-          businessId,
-          actorId: userId,
-          module: "inventory",
-          action: "delete_stock_entry",
-          targetType: "StockEntry",
-          targetId: entry._id,
-          message: `Stock entry deleted. Reverted qty ${entry.qty}. Product on-hand: ${newOnHand}`,
-          ip: req.ip
+          businessId, actorId: userId, module: "inventory", action: "delete_stock_entry", targetType: "StockEntry", targetId: entry._id, message: `Stock entry deleted. Reverted qty ${entry.qty}. Product on-hand: ${newOnHand}`, ip: req.ip
         }).save({ session });
       }
 

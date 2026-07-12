@@ -3,6 +3,7 @@ import { errorResponse } from "../utils/errorResponse.js";
 import { Order } from "../models/Order.js";
 import { Payment } from "../models/Payment.js";
 import { Product } from "../models/Product.js";
+import { Inventory } from "../models/Inventory.js";
 import { StockEntry } from "../models/StockEntry.js";
 import { AuditLog } from "../models/AuditLog.js";
 import { calculateLineTax, splitGstTax, resolveSupplyType, applySupplyTypeToLineItem } from "../utils/taxCalculator.js";
@@ -32,9 +33,11 @@ async function restoreOrderStock({ order, businessId, userId, notePrefix, entryT
     const stockQty = getItemStockQty(item);
     const product = await Product.findById(item.productId).session(session);
     if (!product) continue;
-    const qtyBefore = product.onHandQty;
+    const inventory = await Inventory.findOne({ productId: item.productId, outletId: order.outletId, businessId }).session(session);
+    if (!inventory) continue;
+    const qtyBefore = inventory.onHandQty;
     const qtyAfter = qtyBefore + stockQty;
-    await Product.findByIdAndUpdate(item.productId, { $inc: { onHandQty: stockQty } }, { session });
+    await Inventory.findByIdAndUpdate(inventory._id, { $inc: { onHandQty: stockQty } }, { session });
     await new StockEntry({
       businessId,
       outletId: order.outletId,
@@ -311,8 +314,10 @@ async function createOrder(req, res, next) {
       if (item.productId) {
         const stockQty = getItemStockQty(item);
         const product = await Product.findById(item.productId).session(session);
-        if (product) {
-          const qtyBefore = product.onHandQty;
+        const inventory = await Inventory.findOne({ productId: item.productId, outletId, businessId }).session(session);
+        
+        if (product && inventory) {
+          const qtyBefore = inventory.onHandQty;
           const qtyAfter = qtyBefore - stockQty;
           const lineRevenueRaw = item.lineTotal ?? 0;
           let lineDiscount = 0;
@@ -321,7 +326,7 @@ async function createOrder(req, res, next) {
           }
           const lineRevenue = lineRevenueRaw - lineDiscount;
           const lineCost = getOrderLineCost(product, item);
-          await Product.findByIdAndUpdate(item.productId, { $inc: { onHandQty: -stockQty } }, { session });
+          await Inventory.findByIdAndUpdate(inventory._id, { $inc: { onHandQty: -stockQty } }, { session });
           await new StockEntry({
             businessId,
             outletId,

@@ -1,6 +1,7 @@
 import { successResponse } from "../utils/successResponse.js";
 import { Order } from "../models/Order.js";
 import { Product } from "../models/Product.js";
+import { Inventory } from "../models/Inventory.js";
 import { Category } from "../models/Category.js";
 
 function buildDateRangeQuery(from, to) {
@@ -222,32 +223,47 @@ async function getDashboardAnalytics(req, res, next) {
     const lowStockMatch = { businessId, isActive: true, $expr: { $lte: ["$onHandQty", "$lowStockThreshold"] } };
     if (outletId) lowStockMatch.outletId = outletId;
 
-    const [lowStockProducts, lowStockTotal] = await Promise.all([
-      Product.find(lowStockMatch)
+    const [lowStockInventory, lowStockTotal] = await Promise.all([
+      Inventory.find(lowStockMatch)
         .sort({ onHandQty: 1 })
         .skip((Number(lowStockPage) - 1) * Number(lowStockLimit))
         .limit(Number(lowStockLimit))
-        .select("name onHandQty lowStockThreshold categoryId unit sku price")
-        .populate("categoryId", "name icon color")
+        .populate({
+          path: "productId",
+          select: "name categoryId unit sku price",
+          populate: { path: "categoryId", select: "name icon color" }
+        })
         .lean(),
-      Product.countDocuments(lowStockMatch)
+      Inventory.countDocuments(lowStockMatch)
     ]);
 
+    const lowStockProducts = lowStockInventory
+      .filter(i => i.productId != null)
+      .map(i => ({
+        ...i.productId,
+        onHandQty: i.onHandQty,
+        lowStockThreshold: i.lowStockThreshold
+      }));
+
     // ─── 3. Low-stock categories (group low-stock products by category) ───
-    const allLowStockForCategories = await Product.find(lowStockMatch)
-      .select("categoryId onHandQty lowStockThreshold")
-      .populate("categoryId", "name icon color")
+    const allLowStockForCategories = await Inventory.find(lowStockMatch)
+      .populate({
+        path: "productId",
+        select: "categoryId",
+        populate: { path: "categoryId", select: "name icon color" }
+      })
       .lean();
 
     const lowStockCatMap = new Map();
     for (const p of allLowStockForCategories) {
-      const catId = p.categoryId?._id?.toString() || "uncategorized";
+      if (!p.productId) continue;
+      const catId = p.productId.categoryId?._id?.toString() || "uncategorized";
       if (!lowStockCatMap.has(catId)) {
         lowStockCatMap.set(catId, {
-          categoryId: p.categoryId?._id || null,
-          name: p.categoryId?.name || "Uncategorized",
-          icon: p.categoryId?.icon || "📦",
-          color: p.categoryId?.color || "#6366f1",
+          categoryId: p.productId.categoryId?._id || null,
+          name: p.productId.categoryId?.name || "Uncategorized",
+          icon: p.productId.categoryId?.icon || "📦",
+          color: p.productId.categoryId?.color || "#6366f1",
           count: 0,
           criticalCount: 0
         });

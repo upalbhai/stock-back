@@ -4,6 +4,7 @@ import { Order } from "../models/Order.js";
 import { Outlet } from "../models/Outlet.js";
 import { Customer } from "../models/Customer.js";
 import { Product } from "../models/Product.js";
+import { Inventory } from "../models/Inventory.js";
 import { StockEntry } from "../models/StockEntry.js";
 import { lossReasonLabel, getOrderLineCost } from "../utils/stockCostUtils.js";
 
@@ -448,7 +449,7 @@ async function getProfitLedger(req, res, next) {
       }
     }
 
-    const [entries, total, summaryAgg, products] = await Promise.all([
+    const [entries, total, summaryAgg, inventoryDocs] = await Promise.all([
       StockEntry.find(query)
         .sort({ createdAt: -1 })
         .skip(skip)
@@ -495,10 +496,18 @@ async function getProfitLedger(req, res, next) {
           }
         }
       ]),
-      outletId
-        ? Product.find({ businessId, outletId, isActive: true }).select("onHandQty costPrice price packagingUnits").lean()
-        : Product.find({ businessId, isActive: true }).select("onHandQty costPrice price packagingUnits").lean()
+      Inventory.find({ businessId, isActive: true, ...(outletId ? { outletId } : {}) })
+        .populate({ path: "productId", select: "costPrice price packagingUnits" })
+        .lean()
     ]);
+
+    const products = inventoryDocs.filter(i => i.productId != null).map(i => ({
+      _id: i.productId._id,
+      onHandQty: i.onHandQty,
+      costPrice: i.productId.costPrice,
+      price: i.productId.price,
+      packagingUnits: i.productId.packagingUnits
+    }));
 
     const productMap = new Map(products.map((p) => [p._id.toString(), p]));
     for (const id of productIds) {

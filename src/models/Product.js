@@ -13,7 +13,6 @@ const packagingUnitSchema = new Schema(
 const productSchema = new Schema(
   {
     businessId: { type: Schema.Types.ObjectId, ref: "Business", required: true },
-    outletId: { type: Schema.Types.ObjectId, ref: "Outlet", required: true },
     categoryId: { type: Schema.Types.ObjectId, ref: "Category" },
     name: { type: String, required: true, trim: true },
     description: { type: String },
@@ -31,8 +30,6 @@ const productSchema = new Schema(
     gstRate: { type: Number, default: 0 },
     hsnCode: { type: String },
     packagingUnits: { type: [packagingUnitSchema], default: [] },
-    onHandQty: { type: Number, default: 0 },
-    lowStockThreshold: { type: Number, default: 10 },
     isActive: { type: Boolean, default: true },
     isFeatured: { type: Boolean, default: false },
     image: { type: String },
@@ -41,7 +38,7 @@ const productSchema = new Schema(
   },
   { timestamps: true }
 );
-productSchema.index({ businessId: 1, outletId: 1, isActive: 1 });
+productSchema.index({ businessId: 1, isActive: 1 });
 productSchema.index({ businessId: 1, categoryId: 1 });
 productSchema.index({ businessId: 1, name: "text", sku: "text" });
 const Product = mongoose.models.Product || mongoose.model("Product", productSchema);
