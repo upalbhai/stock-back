@@ -22,6 +22,7 @@ const MODULES = [
 const ACTIONS = [
   "create",
   "read",
+  "read_all",
   "update",
   "delete",
   "refund",

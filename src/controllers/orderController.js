@@ -14,6 +14,7 @@ import { applyCustomerDebit, reverseOrderCustomerLedger } from "../utils/custome
 import { getNextInvoiceNumber } from "../utils/invoiceNumber.js";
 import { getOrderLineCost } from "../utils/stockCostUtils.js";
 import { withTransaction } from "../utils/transaction.js";
+import { User } from "../models/User.js";
 
 async function getNextOrderNumber(businessId) {
   const count = await Order.countDocuments({ businessId });
@@ -384,14 +385,38 @@ async function createOrder(req, res, next) {
 
 async function listOrders(req, res, next) {
   try {
-    const { businessId } = req.user;
-    const { outletId, status, recordStatus = "active", from, to, page = 1, limit = 50 } = req.query;
+    const { businessId, userId, role } = req.user;
+    const { outletId, status, recordStatus = "active", from, to, page = 1, limit = 50, staffId } = req.query;
     const query = { businessId };
     if (outletId) query.outletId = outletId;
     if (status) {
       query.status = status;
     } else {
       Object.assign(query, buildOrderRecordStatusFilter(recordStatus));
+    }
+    
+    // Role-based permission check for viewing all orders vs own orders
+    let canReadAll = false;
+    if (role === "owner" || role === "superadmin") {
+      canReadAll = true;
+    } else {
+      const user = await User.findById(userId).populate("roleId").lean();
+      if (user) {
+        const rolePerm = user.roleId?.permissions?.find(p => p.module === "billing");
+        const customPerm = user.customPermissions?.find(p => p.module === "billing");
+        if ((rolePerm && rolePerm.actions.includes("read_all")) || (customPerm && customPerm.actions.includes("read_all"))) {
+          canReadAll = true;
+        }
+      }
+    }
+
+    if (canReadAll) {
+      if (staffId) {
+        query.createdBy = staffId;
+      }
+    } else {
+      // Force to only see their own orders
+      query.createdBy = userId;
     }
     
     if (req.query.search) {
