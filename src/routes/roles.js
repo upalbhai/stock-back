@@ -3,13 +3,15 @@ import { listRoles, getRole, createRole, updateRole, deleteRole } from "../contr
 import { requireAuth } from "../middlewares/auth.js";
 import { requirePermission } from "../middlewares/permission.js";
 import { validate } from "../middlewares/validate.js";
+import { rateLimit } from "../middlewares/rateLimiter/index.js";
 import { roleCreateSchema, roleUpdateSchema } from "../validators/schemas.js";
+
 const roleRouter = Router();
-roleRouter.get("/", requireAuth, listRoles);
-roleRouter.get("/:id", requireAuth, getRole);
-roleRouter.post("/", requireAuth, requirePermission("roles", "create"), validate(roleCreateSchema), createRole);
-roleRouter.patch("/:id", requireAuth, requirePermission("roles", "update"), validate(roleUpdateSchema), updateRole);
-roleRouter.delete("/:id", requireAuth, requirePermission("roles", "delete"), deleteRole);
-export {
-  roleRouter
-};
+
+roleRouter.get("/", requireAuth, rateLimit("roleCrud"), listRoles);
+roleRouter.get("/:id", requireAuth, rateLimit("roleCrud"), getRole);
+roleRouter.post("/", requireAuth, requirePermission("roles", "create"), rateLimit("roleCrud"), validate(roleCreateSchema), createRole);
+roleRouter.patch("/:id", requireAuth, requirePermission("roles", "update"), rateLimit("roleCrud"), validate(roleUpdateSchema), updateRole);
+roleRouter.delete("/:id", requireAuth, requirePermission("roles", "delete"), rateLimit("roleCrud"), deleteRole);
+
+export { roleRouter };

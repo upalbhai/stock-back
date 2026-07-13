@@ -15,13 +15,18 @@ async function loadBusinessContext(req, res, next) {
     if (!businessId) return next();
 
     const business = await Business.findById(businessId)
-      .select("enabledFeatures businessProfile planType planId")
+      .select("enabledFeatures businessProfile planType planId plan")
       .lean();
     if (!business) return next();
 
     let plan = null;
     if (business.planId) {
-      plan = await Plan.findById(business.planId).select("planType featureKeys").lean();
+      plan = await Plan.findById(business.planId).select("planType featureKeys slug").lean();
+    }
+
+    // Expose plan slug for rate limiter tier resolution
+    if (req.user) {
+      req.user.planSlug = plan?.slug || business.plan || null;
     }
 
     req.enabledFeatures = resolveBusinessFeatures(business);

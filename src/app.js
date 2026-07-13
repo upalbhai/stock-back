@@ -2,7 +2,6 @@ import express from "express";
 import cors from "cors";
 import helmet from "helmet";
 import morgan from "morgan";
-import rateLimit from "express-rate-limit";
 import { corsOrigins, env } from "./config/env.js";
 import { authRouter } from "./routes/auth.js";
 import { businessRouter } from "./routes/businesses.js";
@@ -33,12 +32,6 @@ function isAllowedOrigin(origin) {
   if (corsOrigins.includes(origin)) return true;
   return /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin);
 }
-const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1e3,
-  // 15 minutes
-  max: 20,
-  message: { message: "Too many login attempts. Try again later." },
-});
 function createApp() {
   const app = express();
   app.use(helmet());
@@ -61,7 +54,7 @@ function createApp() {
       timestamp: /* @__PURE__ */ new Date().toISOString(),
     });
   });
-  app.use("/api/auth", authLimiter, authRouter);
+  app.use("/api/auth", authRouter);
   app.use("/api/admin", adminRouter);
   app.use("/api/plans", planRouter);
   app.use("/api/payments", paymentRouter);

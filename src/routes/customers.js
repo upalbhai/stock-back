@@ -11,6 +11,7 @@ import { requireAuth } from "../middlewares/auth.js";
 import { requirePermission } from "../middlewares/permission.js";
 import { requireFeature } from "../middlewares/feature.js";
 import { validate } from "../middlewares/validate.js";
+import { rateLimit } from "../middlewares/rateLimiter/index.js";
 import {
   idParamSchema,
   customerCreateSchema,
@@ -25,6 +26,7 @@ customerRouter.get(
   requireAuth,
   requireFeature("customers"),
   requirePermission("customers", "read"),
+  rateLimit("customerCrud"),
   listCustomers
 );
 customerRouter.post(
@@ -32,6 +34,7 @@ customerRouter.post(
   requireAuth,
   requireFeature("customers"),
   requirePermission("customers", "create"),
+  rateLimit("customerCrud"),
   validate(customerCreateSchema),
   createCustomer
 );
@@ -40,6 +43,7 @@ customerRouter.get(
   requireAuth,
   requireFeature("customers"),
   requirePermission("customers", "read"),
+  rateLimit("customerCrud"),
   validate(idParamSchema, "params"),
   getCustomer
 );
@@ -48,6 +52,7 @@ customerRouter.patch(
   requireAuth,
   requireFeature("customers"),
   requirePermission("customers", "update"),
+  rateLimit("customerCrud"),
   validate(idParamSchema, "params"),
   validate(customerUpdateSchema),
   updateCustomer
@@ -57,6 +62,7 @@ customerRouter.get(
   requireAuth,
   requireFeature("customers"),
   requirePermission("customers", "read"),
+  rateLimit("customerCrud"),
   validate(idParamSchema, "params"),
   getCustomerLedger
 );
@@ -65,6 +71,7 @@ customerRouter.post(
   requireAuth,
   requireFeature("credit_khata"),
   requirePermission("customers", "collect"),
+  rateLimit("customerCrud"),
   validate(idParamSchema, "params"),
   validate(customerPaymentSchema),
   recordCustomerPayment

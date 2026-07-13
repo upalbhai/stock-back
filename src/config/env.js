@@ -4,6 +4,7 @@ dotenv.config();
 const envSchema = z.object({
   PORT: z.coerce.number().default(4e3),
   MONGODB_URI: z.string().min(1),
+  REDIS_URL: z.string().default("redis://localhost:6379"),
   JWT_SECRET: z.string().min(1),
   CORS_ORIGIN: z.string().min(1).default("http://localhost:3000"),
   CORS_ORIGINS: z.string().optional(),
@@ -18,6 +19,7 @@ const envSchema = z.object({
 const env = envSchema.parse({
   PORT: process.env.PORT,
   MONGODB_URI: process.env.MONGODB_URI,
+  REDIS_URL: process.env.REDIS_URL,
   JWT_SECRET: process.env.JWT_SECRET,
   CORS_ORIGIN: process.env.CORS_ORIGIN,
   CORS_ORIGINS: process.env.CORS_ORIGINS,

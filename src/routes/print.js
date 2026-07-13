@@ -2,6 +2,7 @@ import { Router } from "express";
 import { printToNetworkPrinter } from "../controllers/printController.js";
 import { requireAuth } from "../middlewares/auth.js";
 import { requirePermission } from "../middlewares/permission.js";
+import { rateLimit } from "../middlewares/rateLimiter/index.js";
 
 const printRouter = Router();
 
@@ -10,6 +11,7 @@ printRouter.post(
   "/pos",
   requireAuth,
   requirePermission("billing", "create"),
+  rateLimit("print"),
   printToNetworkPrinter
 );
 

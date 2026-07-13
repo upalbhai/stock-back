@@ -3,10 +3,12 @@ import { getMyBusiness, updateMyBusiness } from "../controllers/businessControll
 import { requireAuth } from "../middlewares/auth.js";
 import { requireBusinessOwner } from "../middlewares/permission.js";
 import { validate } from "../middlewares/validate.js";
+import { rateLimit } from "../middlewares/rateLimiter/index.js";
 import { businessUpdateSchema } from "../validators/schemas.js";
+
 const businessRouter = Router();
-businessRouter.get("/mine", requireAuth, requireBusinessOwner, getMyBusiness);
-businessRouter.patch("/mine", requireAuth, requireBusinessOwner, validate(businessUpdateSchema), updateMyBusiness);
-export {
-  businessRouter
-};
+
+businessRouter.get("/mine", requireAuth, requireBusinessOwner, rateLimit("businessCrud"), getMyBusiness);
+businessRouter.patch("/mine", requireAuth, requireBusinessOwner, rateLimit("businessCrud"), validate(businessUpdateSchema), updateMyBusiness);
+
+export { businessRouter };
