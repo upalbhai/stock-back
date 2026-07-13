@@ -19,11 +19,18 @@ async function listUsers(req, res, next) {
     if (req.user.role === "superadmin" && req.query.businessId) {
       businessId = req.query.businessId;
     }
-    const { outletId, role, isActive } = req.query;
+    const { outletId, role, isActive, search } = req.query;
+    const page = parseInt(req.query.page, 10) || 1;
+    const limit = parseInt(req.query.limit, 10) || 50;
+    const skip = (page - 1) * limit;
+
     const query = {};
     if (businessId) query.businessId = businessId;
     if (outletId) query.outletIds = outletId;
     if (role) query.role = role;
+    if (search) {
+      query.name = { $regex: search, $options: "i" };
+    }
     if (isActive !== void 0) {
       if (isActive !== "all") {
         query.isActive = isActive === "true";
@@ -32,17 +39,30 @@ async function listUsers(req, res, next) {
       query.isActive = true;
     }
 
-    const users = await User.find(query)
-      .select("-passwordHash -inviteToken")
-      .populate("roleId", "name permissions")
-      .sort({ name: 1 })
-      .lean();
+    const [users, total] = await Promise.all([
+      User.find(query)
+        .select("-passwordHash -inviteToken")
+        .populate("roleId", "name permissions")
+        .sort({ name: 1 })
+        .skip(skip)
+        .limit(limit)
+        .lean(),
+      User.countDocuments(query)
+    ]);
 
     return successResponse({
       res: res,
 
       data: {
         users
+      },
+      meta: {
+        pagination: {
+          page,
+          limit,
+          total,
+          totalPages: Math.ceil(total / limit)
+        }
       }
     });
   } catch (error) {
