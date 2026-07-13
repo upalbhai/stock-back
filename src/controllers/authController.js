@@ -47,10 +47,11 @@ async function buildAuthUserResponse(user, subscriptionOverrides = {}) {
   let enabledFeatures = null;
   let businessProfile = null;
   let planType = null;
+  let currency = null;
 
   if (user.businessId && user.role !== "superadmin") {
     const biz = await Business.findById(user.businessId)
-      .select("subscriptionStatus trialEndsAt planId planType businessProfile enabledFeatures")
+      .select("subscriptionStatus trialEndsAt planId planType businessProfile enabledFeatures currency")
       .lean();
     if (biz) {
       if (subscriptionStatus === null) subscriptionStatus = biz.subscriptionStatus;
@@ -63,6 +64,7 @@ async function buildAuthUserResponse(user, subscriptionOverrides = {}) {
       enabledFeatures = ctx.enabledFeatures;
       businessProfile = ctx.businessProfile;
       planType = ctx.planType;
+      currency = biz.currency || "INR";
     }
   }
 
@@ -107,6 +109,7 @@ async function buildAuthUserResponse(user, subscriptionOverrides = {}) {
     enabledFeatures,
     businessProfile,
     planType,
+    currency,
     outlets
   };
 }
