@@ -363,7 +363,7 @@ async function createOrder(req, res, next) {
       targetType: "Order",
       targetId: order._id,
       targetName: orderNumber,
-      message: `Order ${orderNumber} created — ₹${total}`,
+      message: `Order ${orderNumber} created — ${total}`,
       ip: req.ip
     }).save({ session });
 
@@ -377,7 +377,7 @@ async function createOrder(req, res, next) {
       businessId,
       type: "order_created",
       title: "New Order Created",
-      body: `Order ${orderNumber} created for ₹${total}.`,
+      body: `Order ${orderNumber} created for ${total}.`,
       metadata: { orderId: order._id, orderNumber },
       link: `/dashboard/orders/${order._id}`,
       excludeUserId: userId

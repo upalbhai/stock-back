@@ -179,7 +179,7 @@ export const getSubscriptionConfirmationTemplate = (planName, amount, endDate) =
       `<p style="margin-top: 0;">Your payment was successful and your subscription is now active.</p>
        <table style="width: 100%; border-collapse: collapse; margin: 24px 0; background: #F5F5F7; border-radius: 8px; overflow: hidden; border: 1px solid #D9D9E0;">
          <tr><td style="padding: 12px 16px; color: #6C6C70; font-size: 14px; border-bottom: 1px solid #D9D9E0;">Plan</td><td style="padding: 12px 16px; font-weight: 600; text-align: right; border-bottom: 1px solid #D9D9E0;">${planName}</td></tr>
-         <tr><td style="padding: 12px 16px; color: #6C6C70; font-size: 14px; border-bottom: 1px solid #D9D9E0;">Amount Paid</td><td style="padding: 12px 16px; font-weight: 600; text-align: right; border-bottom: 1px solid #D9D9E0;">₹${amount}</td></tr>
+         <tr><td style="padding: 12px 16px; color: #6C6C70; font-size: 14px; border-bottom: 1px solid #D9D9E0;">Amount Paid</td><td style="padding: 12px 16px; font-weight: 600; text-align: right; border-bottom: 1px solid #D9D9E0;">${amount}</td></tr>
          <tr><td style="padding: 12px 16px; color: #6C6C70; font-size: 14px;">Next Billing Date</td><td style="padding: 12px 16px; font-weight: 600; text-align: right;">${new Date(endDate).toLocaleDateString()}</td></tr>
        </table>
        <p style="margin-bottom: 0;">You can view and download your invoice from the billing section in your dashboard.</p>`

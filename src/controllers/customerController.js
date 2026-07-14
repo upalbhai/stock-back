@@ -241,7 +241,7 @@ async function recordCustomerPayment(req, res, next) {
       return errorResponse({
         res,
         statusCode: 400,
-        message: `Payment exceeds outstanding balance of ₹${customer.outstandingBalance}`
+        message: `Payment exceeds outstanding balance of ${customer.outstandingBalance}`
       });
     }
 
@@ -263,7 +263,7 @@ async function recordCustomerPayment(req, res, next) {
       targetType: "Customer",
       targetId: customer._id,
       targetName: customer.name,
-      message: `Payment ₹${amount} received from ${customer.name}`,
+      message: `Payment ${amount} received from ${customer.name}`,
       ip: req.ip
     });
 

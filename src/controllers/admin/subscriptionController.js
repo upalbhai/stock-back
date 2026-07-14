@@ -6,6 +6,7 @@ import { Subscription } from "../../models/Subscription.js";
 import { AuditLog } from "../../models/AuditLog.js";
 import { applyPlanToBusiness } from "../../utils/syncBusinessPlan.js";
 import mailer from "../../utils/mailer.js";
+import { getIO } from "../../config/socket.js";
 
 async function adminCreateManualSubscription(req, res, next) {
   try {
@@ -91,6 +92,12 @@ async function adminCreateManualSubscription(req, res, next) {
       }
     }
 
+    try {
+      getIO().to(`business:${businessId}`).emit("subscriptionUpdated");
+    } catch (err) {
+      console.warn("Failed to emit subscription socket event", err.message);
+    }
+
     return successResponse({
       res,
       data: {
@@ -144,6 +151,12 @@ async function adminCancelSubscription(req, res, next) {
       message: `Manually cancelled subscription for business: ${business.name}`,
       ip: req.ip
     });
+
+    try {
+      getIO().to(`business:${businessId}`).emit("subscriptionUpdated");
+    } catch (err) {
+      console.warn("Failed to emit subscription socket event", err.message);
+    }
 
     return successResponse({
       res,

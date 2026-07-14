@@ -28,7 +28,7 @@ export async function applyCustomerDebit({
 
   if (customer.creditLimit > 0 && customer.outstandingBalance + debitAmount > customer.creditLimit) {
     const err = new Error(
-      `Credit limit exceeded. Limit: ₹${customer.creditLimit}, current balance: ₹${customer.outstandingBalance}`
+      `Credit limit exceeded. Limit: ${customer.creditLimit}, current balance: ${customer.outstandingBalance}`
     );
     err.statusCode = 400;
     throw err;

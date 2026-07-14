@@ -9,7 +9,7 @@ export async function listNotifications(req, res, next) {
     const skip = (page - 1) * limit;
 
     const query = {
-      businessId: req.business._id,
+      businessId: req.user.businessId,
       recipientId: req.user.userId
     };
 
@@ -39,7 +39,7 @@ export async function markAsRead(req, res, next) {
   try {
     const { id } = req.params;
     const notification = await Notification.findOneAndUpdate(
-      { _id: id, recipientId: req.user.userId, businessId: req.business._id },
+      { _id: id, recipientId: req.user.userId, businessId: req.user.businessId },
       { isRead: true, readAt: new Date() },
       { new: true }
     );
@@ -57,7 +57,7 @@ export async function markAsRead(req, res, next) {
 export async function markAllAsRead(req, res, next) {
   try {
     await Notification.updateMany(
-      { recipientId: req.user.userId, businessId: req.business._id, isRead: false },
+      { recipientId: req.user.userId, businessId: req.user.businessId, isRead: false },
       { isRead: true, readAt: new Date() }
     );
     return successResponse({ res, message: "All notifications marked as read" });
@@ -70,7 +70,7 @@ export async function getUnreadCount(req, res, next) {
   try {
     const count = await Notification.countDocuments({
       recipientId: req.user.userId,
-      businessId: req.business._id,
+      businessId: req.user.businessId,
       isRead: false
     });
     return successResponse({ res, data: { unreadCount: count } });

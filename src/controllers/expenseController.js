@@ -97,7 +97,7 @@ async function voidExpense(req, res, next) {
       action: "void",
       targetType: "Expense",
       targetId: expense._id,
-      targetName: `${expense.category} — ₹${expense.amount}`,
+      targetName: `${expense.category} — ${expense.amount}`,
       message: `Expense voided. Reason: ${reason}`,
       ip: req.ip
     });
