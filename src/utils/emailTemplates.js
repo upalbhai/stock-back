@@ -3,45 +3,110 @@
  * You can customize the return values based on your UI/UX needs.
  */
 
+const wrapHtml = (title, content) => `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #F5F5F7; margin: 0; padding: 40px 20px; -webkit-font-smoothing: antialiased;">
+  <div style="max-width: 560px; margin: 0 auto; background-color: #FFFFFF; border-radius: 14px; border: 1px solid #D9D9E0; overflow: hidden; box-shadow: 0 10px 30px -20px rgba(28, 28, 30, 0.15);">
+    <div style="padding: 32px 32px 24px;">
+      <h2 style="margin: 0; font-size: 22px; font-weight: 600; color: #1C1C1E; letter-spacing: -0.5px;">${title}</h2>
+    </div>
+    <div style="padding: 0 32px 32px; font-size: 15px; line-height: 1.6; color: #1C1C1E;">
+      ${content}
+    </div>
+    <div style="padding: 24px 32px; background-color: #F5F5F7; border-top: 1px solid #D9D9E0; font-size: 13px; color: #6C6C70; text-align: center;">
+      <p style="margin: 0;">© ${new Date().getFullYear()} Outlet Pulse. All rights reserved.</p>
+    </div>
+  </div>
+</body>
+</html>
+`;
+
 export const getOtpEmailTemplate = (code) => {
   return {
     subject: "Your login code",
-    html: `<p>Your login code is <strong>${code}</strong>. It expires in 10 minutes.</p>`
+    html: wrapHtml(
+      "Login to Outlet Pulse",
+      `<p style="margin-top: 0;">Use the following code to complete your login. This code will expire in 10 minutes.</p>
+       <div style="margin: 32px 0; padding: 24px; background-color: #F5F5F7; border-radius: 12px; text-align: center; border: 1px solid #D9D9E0;">
+         <span style="font-size: 32px; font-weight: 700; letter-spacing: 6px; color: #0066CC;">${code}</span>
+       </div>
+       <p style="margin-bottom: 0; color: #6C6C70; font-size: 14px;">If you didn't request this code, you can safely ignore this email.</p>`
+    )
   };
 };
 
 export const getRegistrationSubmittedTemplate = (businessName) => {
   return {
     subject: `Registration submitted for ${businessName}`,
-    html: `<p>Your registration for <strong>${businessName}</strong> has been received and is awaiting admin approval.</p>`
+    html: wrapHtml(
+      "Registration Received",
+      `<p style="margin-top: 0;">Hi there,</p>
+       <p>Your registration for <strong>${businessName}</strong> has been successfully received.</p>
+       <div style="margin: 24px 0; padding: 16px; background-color: #E8F0FE; border-radius: 8px; border-left: 4px solid #0066CC;">
+         <p style="margin: 0; color: #0066CC; font-weight: 500;">Status: Awaiting Admin Approval</p>
+       </div>
+       <p style="margin-bottom: 0;">We will notify you once your business registration has been reviewed.</p>`
+    )
   };
 };
 
 export const getBusinessApprovedTemplate = (businessName) => {
   return {
     subject: `Your business ${businessName} is approved`,
-    html: `<p>Congratulations — your business <strong>${businessName}</strong> has been approved. You can now login and manage outlets.</p>`
+    html: wrapHtml(
+      "Business Approved!",
+      `<p style="margin-top: 0;">Congratulations!</p>
+       <p>Your business <strong>${businessName}</strong> has been approved by our team.</p>
+       <div style="margin: 24px 0; text-align: center;">
+         <a href="#" style="display: inline-block; padding: 12px 24px; background-color: #0066CC; color: #FFFFFF; text-decoration: none; font-weight: 600; border-radius: 8px; font-size: 15px;">Login to Dashboard</a>
+       </div>
+       <p style="margin-bottom: 0;">You can now log in to your account and start managing your outlets.</p>`
+    )
   };
 };
 
 export const getBusinessRejectedTemplate = (businessName, reason) => {
   return {
     subject: `Your business ${businessName} registration was declined`,
-    html: `<p>We're sorry — your business <strong>${businessName}</strong> was declined. ${reason ? `<p>Reason: ${reason}</p>` : ""}</p>`
+    html: wrapHtml(
+      "Registration Declined",
+      `<p style="margin-top: 0;">Hi there,</p>
+       <p>We're sorry to inform you that your registration for <strong>${businessName}</strong> was declined.</p>
+       ${reason ? `<div style="margin: 24px 0; padding: 16px; background-color: #FFF2F1; border-radius: 8px; border-left: 4px solid #FF3B30;"><p style="margin: 0; color: #C22922;"><strong>Reason:</strong> ${reason}</p></div>` : ""}
+       <p style="margin-bottom: 0; color: #6C6C70;">If you believe this was a mistake or have questions, please contact our support team.</p>`
+    )
   };
 };
 
 export const getOutletApprovedTemplate = (outletName) => {
   return {
     subject: `Outlet approved: ${outletName}`,
-    html: `<p>Your outlet <strong>${outletName}</strong> has been approved and is now active.</p>`
+    html: wrapHtml(
+      "Outlet Approved",
+      `<p style="margin-top: 0;">Good news!</p>
+       <p>Your outlet <strong>${outletName}</strong> has been approved and is now active.</p>
+       <p style="margin-bottom: 0;">You can now start managing this outlet from your dashboard.</p>`
+    )
   };
 };
 
 export const getInviteEmailTemplate = (inviteLink, name) => {
   return {
     subject: `You're invited to join`,
-    html: `<p>Hi ${name || ""},</p><p>You have been invited. Click <a href="${inviteLink}">this link</a> to accept the invite.</p>`
+    html: wrapHtml(
+      "You've been invited",
+      `<p style="margin-top: 0;">Hi ${name || "there"},</p>
+       <p>You have been invited to join a team on Outlet Pulse.</p>
+       <div style="margin: 32px 0; text-align: center;">
+         <a href="${inviteLink}" style="display: inline-block; padding: 12px 24px; background-color: #0066CC; color: #FFFFFF; text-decoration: none; font-weight: 600; border-radius: 8px; font-size: 15px;">Accept Invitation</a>
+       </div>
+       <p style="margin-bottom: 0; font-size: 14px; color: #6C6C70;">Or copy and paste this link into your browser:<br><a href="${inviteLink}" style="color: #0066CC; word-break: break-all;">${inviteLink}</a></p>`
+    )
   };
 };
 
@@ -49,58 +114,76 @@ export const getWelcomeEmailTemplate = (name, trialEndDate) => {
   const endDateStr = trialEndDate ? new Date(trialEndDate).toLocaleDateString() : 'in 7 days';
   return {
     subject: `Welcome to Outlet Pulse - Your 7-Day Trial Starts Now!`,
-    html: `
-      <h2>Welcome aboard, ${name}!</h2>
-      <p>Your 7-day free trial has been activated successfully.</p>
-      <p>You now have full access to all features to test out how Outlet Pulse can help your business.</p>
-      <p>Your trial will end on <strong>${endDateStr}</strong>. Enjoy!</p>
-    `
+    html: wrapHtml(
+      `Welcome aboard, ${name}!`,
+      `<p style="margin-top: 0;">Your 7-day free trial has been activated successfully.</p>
+       <p>You now have full access to all premium features to test out how Outlet Pulse can help your business thrive.</p>
+       <div style="margin: 24px 0; padding: 16px; background-color: #E8F0FE; border-radius: 8px; border: 1px solid #0066CC;">
+         <p style="margin: 0; color: #0066CC; font-weight: 500; text-align: center;">Your trial will end on <strong>${endDateStr}</strong></p>
+       </div>
+       <p style="margin-bottom: 0;">Enjoy exploring the platform!</p>`
+    )
   };
 };
 
 export const getPasswordResetOtpTemplate = (code) => {
   return {
     subject: "Password Reset Code",
-    html: `
-      <h2>Password Reset</h2>
-      <p>Your password reset code is: <strong>${code}</strong></p>
-      <p>This code will expire in 10 minutes. If you didn't request this, you can ignore this email.</p>
-    `
+    html: wrapHtml(
+      "Password Reset",
+      `<p style="margin-top: 0;">We received a request to reset your password. Use the code below to proceed.</p>
+       <div style="margin: 32px 0; padding: 24px; background-color: #F5F5F7; border-radius: 12px; text-align: center; border: 1px solid #D9D9E0;">
+         <span style="font-size: 32px; font-weight: 700; letter-spacing: 6px; color: #0066CC;">${code}</span>
+       </div>
+       <p style="margin-bottom: 0; color: #6C6C70; font-size: 14px;">This code will expire in 10 minutes. If you didn't request a password reset, you can safely ignore this email.</p>`
+    )
   };
 };
 
 export const getTrialExpiringEmailTemplate = (name, daysLeft) => {
   return {
     subject: `Your free trial expires in ${daysLeft} days`,
-    html: `
-      <h2>Hi ${name},</h2>
-      <p>We hope you're enjoying Outlet Pulse!</p>
-      <p>This is a quick reminder that your 7-day free trial will expire in <strong>${daysLeft} days</strong>.</p>
-      <p>To ensure uninterrupted access, please upgrade to a paid plan before your trial ends.</p>
-    `
+    html: wrapHtml(
+      "Trial Expiring Soon",
+      `<p style="margin-top: 0;">Hi ${name},</p>
+       <p>We hope you're enjoying Outlet Pulse!</p>
+       <p>This is a quick reminder that your 7-day free trial will expire in <strong>${daysLeft} days</strong>.</p>
+       <div style="margin: 24px 0; text-align: center;">
+         <a href="#" style="display: inline-block; padding: 12px 24px; background-color: #FF9500; color: #FFFFFF; text-decoration: none; font-weight: 600; border-radius: 8px; font-size: 15px;">Upgrade Now</a>
+       </div>
+       <p style="margin-bottom: 0;">To ensure uninterrupted access to all features, please upgrade to a paid plan before your trial ends.</p>`
+    )
   };
 };
 
 export const getTrialExpiredEmailTemplate = (name) => {
   return {
     subject: `Your free trial has expired`,
-    html: `
-      <h2>Hi ${name},</h2>
-      <p>Your 7-day free trial has expired.</p>
-      <p>We'd love to keep having you with us! Please log in to your dashboard and choose a subscription plan to restore access to your account.</p>
-    `
+    html: wrapHtml(
+      "Free Trial Expired",
+      `<p style="margin-top: 0;">Hi ${name},</p>
+       <p>Your 7-day free trial has officially expired.</p>
+       <p>We'd love to keep having you with us! To restore access to your account and continue managing your outlets seamlessly, please choose a subscription plan.</p>
+       <div style="margin: 24px 0; text-align: center;">
+         <a href="#" style="display: inline-block; padding: 12px 24px; background-color: #0066CC; color: #FFFFFF; text-decoration: none; font-weight: 600; border-radius: 8px; font-size: 15px;">View Plans</a>
+       </div>`
+    )
   };
 };
 
 export const getSubscriptionConfirmationTemplate = (planName, amount, endDate) => {
   return {
     subject: `Subscription Confirmation - ${planName} Plan`,
-    html: `
-      <h2>Thank you for subscribing!</h2>
-      <p>Your payment of <strong>₹${amount}</strong> was successful.</p>
-      <p>You are now subscribed to the <strong>${planName}</strong> plan.</p>
-      <p>Your subscription is active until: <strong>${new Date(endDate).toLocaleDateString()}</strong>.</p>
-    `
+    html: wrapHtml(
+      "Thank you for subscribing!",
+      `<p style="margin-top: 0;">Your payment was successful and your subscription is now active.</p>
+       <table style="width: 100%; border-collapse: collapse; margin: 24px 0; background: #F5F5F7; border-radius: 8px; overflow: hidden; border: 1px solid #D9D9E0;">
+         <tr><td style="padding: 12px 16px; color: #6C6C70; font-size: 14px; border-bottom: 1px solid #D9D9E0;">Plan</td><td style="padding: 12px 16px; font-weight: 600; text-align: right; border-bottom: 1px solid #D9D9E0;">${planName}</td></tr>
+         <tr><td style="padding: 12px 16px; color: #6C6C70; font-size: 14px; border-bottom: 1px solid #D9D9E0;">Amount Paid</td><td style="padding: 12px 16px; font-weight: 600; text-align: right; border-bottom: 1px solid #D9D9E0;">₹${amount}</td></tr>
+         <tr><td style="padding: 12px 16px; color: #6C6C70; font-size: 14px;">Next Billing Date</td><td style="padding: 12px 16px; font-weight: 600; text-align: right;">${new Date(endDate).toLocaleDateString()}</td></tr>
+       </table>
+       <p style="margin-bottom: 0;">You can view and download your invoice from the billing section in your dashboard.</p>`
+    )
   };
 };
 
@@ -115,21 +198,20 @@ export const getNewDeviceLoginTemplate = (name, deviceName, location, ip, time) 
   });
   return {
     subject: "New device login detected on your account",
-    html: `
-      <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 520px; margin: 0 auto;">
-        <h2 style="color: #1a1a2e;">New Login Detected</h2>
-        <p>Hi ${name || "there"},</p>
-        <p>We noticed a new sign-in to your Outlet Pulse account from a device we haven't seen before.</p>
-        <table style="width: 100%; border-collapse: collapse; margin: 20px 0; background: #f8f9fa; border-radius: 12px; overflow: hidden;">
-          <tr><td style="padding: 12px 16px; color: #666; font-size: 13px;">Device</td><td style="padding: 12px 16px; font-weight: 600;">${deviceName || "Unknown device"}</td></tr>
-          <tr style="border-top: 1px solid #e9ecef;"><td style="padding: 12px 16px; color: #666; font-size: 13px;">Location</td><td style="padding: 12px 16px; font-weight: 600;">${locationStr}</td></tr>
-          <tr style="border-top: 1px solid #e9ecef;"><td style="padding: 12px 16px; color: #666; font-size: 13px;">IP Address</td><td style="padding: 12px 16px; font-weight: 600; font-family: monospace;">${ip || "Unknown"}</td></tr>
-          <tr style="border-top: 1px solid #e9ecef;"><td style="padding: 12px 16px; color: #666; font-size: 13px;">Time</td><td style="padding: 12px 16px; font-weight: 600;">${timeStr}</td></tr>
-        </table>
-        <p style="color: #444;">If this was you, no action is needed.</p>
-        <p style="color: #c0392b; font-weight: 600;">If this wasn't you, please change your password immediately and revoke unknown sessions from your account settings.</p>
-      </div>
-    `
+    html: wrapHtml(
+      "New Login Detected",
+      `<p style="margin-top: 0;">Hi ${name || "there"},</p>
+       <p>We noticed a new sign-in to your Outlet Pulse account from a device we haven't seen before.</p>
+       <table style="width: 100%; border-collapse: collapse; margin: 24px 0; background: #F5F5F7; border-radius: 8px; overflow: hidden; border: 1px solid #D9D9E0;">
+         <tr><td style="padding: 12px 16px; color: #6C6C70; font-size: 14px; border-bottom: 1px solid #D9D9E0; width: 100px;">Device</td><td style="padding: 12px 16px; font-weight: 600; color: #1C1C1E; border-bottom: 1px solid #D9D9E0;">${deviceName || "Unknown device"}</td></tr>
+         <tr><td style="padding: 12px 16px; color: #6C6C70; font-size: 14px; border-bottom: 1px solid #D9D9E0;">Location</td><td style="padding: 12px 16px; font-weight: 600; color: #1C1C1E; border-bottom: 1px solid #D9D9E0;">${locationStr}</td></tr>
+         <tr><td style="padding: 12px 16px; color: #6C6C70; font-size: 14px; border-bottom: 1px solid #D9D9E0;">IP Address</td><td style="padding: 12px 16px; font-weight: 600; color: #1C1C1E; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; border-bottom: 1px solid #D9D9E0;">${ip || "Unknown"}</td></tr>
+         <tr><td style="padding: 12px 16px; color: #6C6C70; font-size: 14px;">Time</td><td style="padding: 12px 16px; font-weight: 600; color: #1C1C1E;">${timeStr}</td></tr>
+       </table>
+       <p style="margin-bottom: 12px;">If this was you, no action is needed.</p>
+       <div style="padding: 16px; background-color: #FFF2F1; border-radius: 8px; border-left: 4px solid #FF3B30;">
+         <p style="margin: 0; color: #C22922; font-size: 14px;"><strong>If this wasn't you</strong>, please change your password immediately and revoke unknown sessions from your account settings.</p>
+       </div>`
+    )
   };
 };
-

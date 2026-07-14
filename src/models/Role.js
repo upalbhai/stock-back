@@ -17,7 +17,8 @@ const MODULES = [
   "products",
   "units",
   "customers",
-  "invoices"
+  "invoices",
+  "notifications"
 ];
 const ACTIONS = [
   "create",

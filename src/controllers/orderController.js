@@ -15,6 +15,7 @@ import { getNextInvoiceNumber } from "../utils/invoiceNumber.js";
 import { getOrderLineCost } from "../utils/stockCostUtils.js";
 import { withTransaction } from "../utils/transaction.js";
 import { User } from "../models/User.js";
+import { notifyBusiness } from "../utils/notificationService.js";
 
 async function getNextOrderNumber(businessId) {
   const count = await Order.countDocuments({ businessId });
@@ -372,6 +373,16 @@ async function createOrder(req, res, next) {
       .session(session)
       .lean();
 
+    notifyBusiness({
+      businessId,
+      type: "order_created",
+      title: "New Order Created",
+      body: `Order ${orderNumber} created for ₹${total}.`,
+      metadata: { orderId: order._id, orderNumber },
+      link: `/dashboard/orders/${order._id}`,
+      excludeUserId: userId
+    }).catch(console.error);
+
     return successResponse({
       res: res,
       statusCode: 201,
@@ -613,6 +624,16 @@ async function voidOrder(req, res, next) {
         message: `Order ${order.orderNumber} voided. Reason: ${reason}`,
         ip: req.ip
       }).save({ session });
+
+      notifyBusiness({
+        businessId,
+        type: "order_voided",
+        title: "Order Voided",
+        body: `Order ${order.orderNumber} was voided. Reason: ${reason || "N/A"}`,
+        metadata: { orderId: order._id, orderNumber: order.orderNumber },
+        link: `/dashboard/orders/${order._id}`,
+        excludeUserId: userId
+      }).catch(console.error);
 
       return successResponse({ res, message: "Order voided and stock restored" });
     });

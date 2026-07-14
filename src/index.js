@@ -5,13 +5,20 @@ import { initRateLimiter } from "./middlewares/rateLimiter/index.js";
 import { env } from "./config/env.js";
 import { logger } from "./utils/logger.js";
 
+import http from "http";
+import { initSocket } from "./config/socket.js";
+
 async function start() {
   await connectDatabase();
   await connectRedis();
   await initRateLimiter(redisClient);
 
   const app = createApp();
-  app.listen(env.PORT, () => {
+  const httpServer = http.createServer(app);
+  
+  initSocket(httpServer);
+
+  httpServer.listen(env.PORT, () => {
     logger.info(`API running on port ${env.PORT}`);
   });
 }

@@ -27,6 +27,7 @@ import { errorHandler } from "./middlewares/error.js";
 import { requireActiveSubscription } from "./middlewares/subscription.js";
 import { requireAuth } from "./middlewares/auth.js";
 import { loadBusinessContext } from "./middlewares/feature.js";
+import { notificationRouter } from "./routes/notifications.js";
 function isAllowedOrigin(origin) {
   if (!origin) return true;
   if (corsOrigins.includes(origin)) return true;
@@ -78,6 +79,7 @@ function createApp() {
   app.use("/api/roles", ...withSub, roleRouter);
   app.use("/api/audit-logs", ...withSub, auditRouter);
   app.use("/api/print", ...withSub, printRouter);
+  app.use("/api/notifications", ...withSub, notificationRouter);
 
   app.use(errorHandler);
   return app;

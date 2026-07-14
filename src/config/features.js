@@ -19,6 +19,12 @@ export const FEATURES = {
     group: "products",
     description: "Peti/crate packaging on products"
   },
+  notifications: {
+    key: "notifications",
+    label: "Notifications",
+    group: "communication",
+    description: "Real-time in-app notifications for orders, stock alerts, etc."
+  },
   credit_khata: {
     key: "credit_khata",
     label: "Credit / Khata",
@@ -58,7 +64,7 @@ export const FEATURES = {
 };
 
 export const PLAN_FEATURE_TEMPLATES = {
-  retail: ["retail_billing", "order_void", "order_history"],
+  retail: ["retail_billing", "order_void", "order_history", "notifications"],
   wholesale: [
     "wholesale_billing",
     "packaging_units",
@@ -67,7 +73,8 @@ export const PLAN_FEATURE_TEMPLATES = {
     "customers",
     "gst_invoices",
     "order_void",
-    "order_history"
+    "order_history",
+    "notifications"
   ],
   hybrid: [
     "retail_billing",
@@ -78,7 +85,8 @@ export const PLAN_FEATURE_TEMPLATES = {
     "customers",
     "gst_invoices",
     "order_void",
-    "order_history"
+    "order_history",
+    "notifications"
   ]
 };
 
