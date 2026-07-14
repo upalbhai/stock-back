@@ -34,7 +34,7 @@ async function seed() {
     const superadmin = await User.create({
       name: "Super Admin",
       phone: "9999999999",
-      email: "superadmin@outletpulse.com",
+      email: "superadmin@minihisab.com",
       role: "superadmin",
       passwordHash: hashedPassword,
       isActive: true,
@@ -46,7 +46,7 @@ async function seed() {
     const owner = await User.create({
       name: "Rahul Owner",
       phone: "9876543210",
-      email: "rahul@outletpulse.com",
+      email: "rahul@minihisab.com",
       role: "owner",
       passwordHash: hashedPassword,
       isActive: true,
@@ -99,7 +99,7 @@ async function seed() {
     await User.create({
       name: "Manoj Manager",
       phone: "7777777777",
-      email: "manoj@outletpulse.com",
+      email: "manoj@minihisab.com",
       role: "manager",
       roleId: managerRole?._id,
       businessId: business._id,
@@ -115,15 +115,15 @@ async function seed() {
     console.log("\nDatabase seeded successfully!");
     console.log("--------------------------------------");
     console.log("Super Admin Login:");
-    console.log("Email: superadmin@outletpulse.com");
+    console.log("Email: superadmin@minihisab.com");
     console.log("Password: password123");
     console.log("--------------------------------------");
     console.log("Owner Login:");
-    console.log("Email: rahul@outletpulse.com");
+    console.log("Email: rahul@minihisab.com");
     console.log("Password: password123");
     console.log("--------------------------------------");
     console.log("Manager Login:");
-    console.log("Email: manoj@outletpulse.com");
+    console.log("Email: manoj@minihisab.com");
     console.log("Password: password123");
     console.log("--------------------------------------");
 

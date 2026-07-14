@@ -25,11 +25,11 @@ async function seedAdmin() {
 
     console.log("Creating Super Admin...");
     await User.findOneAndUpdate(
-      { email: "superadmin@outletpulse.com" },
+      { email: "superadmin@minihisab.com" },
       {
         name: "Super Admin",
         phone: "9999999999",
-        email: "superadmin@outletpulse.com",
+        email: "superadmin@minihisab.com",
         role: "superadmin",
         passwordHash: hashedPassword,
         isActive: true,
@@ -41,7 +41,7 @@ async function seedAdmin() {
     console.log("\nAdmin seeded successfully!");
     console.log("--------------------------------------");
     console.log("Super Admin Login:");
-    console.log("Email: superadmin@outletpulse.com");
+    console.log("Email: superadmin@minihisab.com");
     console.log("Password: password123");
     console.log("--------------------------------------");
 

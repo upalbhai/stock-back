@@ -10,8 +10,8 @@ const envSchema = z.object({
   CORS_ORIGINS: z.string().optional(),
   FRONTEND_URL: z.string().default("http://localhost:3000"),
   BREVO_API_KEY: z.string().optional(),
-  BREVO_FROM_EMAIL: z.string().default("no-reply@outletpulse.com"),
-  BREVO_FROM_NAME: z.string().default("Outlet Pulse"),
+  BREVO_FROM_EMAIL: z.string().default("no-reply@minihisab.com"),
+  BREVO_FROM_NAME: z.string().default("Mini Hisab"),
   EMAIL_USER: z.string().optional(),
   RAZORPAY_KEY_ID: z.string().optional(),
   RAZORPAY_KEY_SECRET: z.string().optional()
