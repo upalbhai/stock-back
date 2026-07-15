@@ -152,7 +152,7 @@ async function verifyPayment(req, res, next) {
     // Send confirmation email
     if (business.ownerId?.email) {
       try {
-        await mailer.sendSubscriptionConfirmation(business.ownerId.email, plan.name, amount, endDate);
+        await mailer.sendSubscriptionConfirmation(business.ownerId.email, plan.name, amount, "INR", endDate);
       } catch (e) {
         console.warn("Failed to send subscription confirmation email", e.message);
       }

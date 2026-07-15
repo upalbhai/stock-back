@@ -10,8 +10,8 @@ import { getIO } from "../../config/socket.js";
 
 async function adminCreateManualSubscription(req, res, next) {
   try {
-    const { businessId, planId, billingCycle = "monthly", amount, paymentReference, endDate, notes } = req.body;
-    
+    const { businessId, planId, billingCycle = "monthly", amount, currency, paymentReference, endDate, notes } = req.body;
+
     if (!businessId || !planId) {
       return errorResponse({
         res,
@@ -52,6 +52,7 @@ async function adminCreateManualSubscription(req, res, next) {
     }
 
     const finalAmount = amount !== undefined ? Number(amount) : (billingCycle === "yearly" ? plan.yearlyPrice : plan.monthlyPrice);
+    const finalCurrency = currency || business.currency || "INR";
 
     // Create Subscription record
     const subscription = await Subscription.create({
@@ -63,6 +64,7 @@ async function adminCreateManualSubscription(req, res, next) {
       razorpayOrderId: "MANUAL_ADMIN_ORDER",
       razorpaySignature: "MANUAL_ADMIN_SIG",
       amount: finalAmount,
+      currency: finalCurrency,
       startDate,
       endDate: calculatedEndDate
     });
@@ -86,7 +88,7 @@ async function adminCreateManualSubscription(req, res, next) {
     const populatedBiz = await Business.findById(businessId).populate("ownerId", "email name");
     if (populatedBiz?.ownerId?.email) {
       try {
-        await mailer.sendSubscriptionConfirmation(populatedBiz.ownerId.email, plan.name, finalAmount, calculatedEndDate);
+        await mailer.sendSubscriptionConfirmation(populatedBiz.ownerId.email, plan.name, finalAmount, finalCurrency, calculatedEndDate);
       } catch (e) {
         console.warn("Failed to send subscription confirmation email:", e.message);
       }
@@ -113,7 +115,7 @@ async function adminCreateManualSubscription(req, res, next) {
 async function adminCancelSubscription(req, res, next) {
   try {
     const { businessId } = req.body;
-    
+
     if (!businessId) {
       return errorResponse({
         res,

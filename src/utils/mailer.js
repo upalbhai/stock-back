@@ -114,9 +114,9 @@ export async function sendTrialExpiredEmail(email, name) {
   return sendEmail({ to: email, subject, html });
 }
 
-export async function sendSubscriptionConfirmation(email, planName, amount, endDate) {
+export async function sendSubscriptionConfirmation(email, planName, amount, currency, endDate) {
   if (!email) return;
-  const { subject, html } = getSubscriptionConfirmationTemplate(planName, amount, endDate);
+  const { subject, html } = getSubscriptionConfirmationTemplate(planName, amount, currency, endDate);
   return sendEmail({ to: email, subject, html });
 }
 
