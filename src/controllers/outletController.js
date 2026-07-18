@@ -56,8 +56,7 @@ async function createOutlet(req, res, next) {
     const { name, address, phone, email, taxEnabled, defaultTaxRate, billingModes, settings } = req.body;
     // determine if this outlet should be active immediately or await admin approval
     const business = await Business.findById(businessId).lean();
-    const existingCount = await Outlet.countDocuments({ businessId });
-    const shouldBePending = business?.status !== "active" || existingCount >= 1;
+    const shouldBePending = business?.status !== "active";
     const outlet = await Outlet.create({
       businessId,
       name,

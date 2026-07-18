@@ -47,6 +47,20 @@ export function initSocket(httpServer) {
       });
     }
 
+    // Send initial unread notification count
+    if (socket.user?.userId) {
+      import("../models/Notification.js").then(({ Notification }) => {
+        Notification.countDocuments({
+          recipientId: socket.user.userId,
+          isRead: false
+        }).then(count => {
+          socket.emit("notification:unread-count", { count });
+        }).catch(err => {
+          logger.error("Failed to fetch unread count for socket", err);
+        });
+      });
+    }
+
     socket.on("disconnect", () => {
       logger.info(`Socket disconnected: ${socket.id} (User: ${socket.user?.userId})`);
     });
