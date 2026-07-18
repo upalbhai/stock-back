@@ -36,7 +36,8 @@ async function getDashboardAnalytics(req, res, next) {
       // Revenue products
       revProdPage = 1, revProdLimit = 5, revProdSort = "desc",
       // Low stock
-      lowStockPage = 1, lowStockLimit = 10,
+      lowStockPage = 1, lowStockLimit = 10, lowStockSearch = "",
+      lowStockCatPage = 1, lowStockCatLimit = 10, lowStockCatSearch = "",
     } = req.query;
 
     // ─── Build order match filter ───
@@ -220,11 +221,24 @@ async function getDashboardAnalytics(req, res, next) {
     }
 
     // ─── 2. Low-stock products ───
-    const lowStockMatch = { businessId, isActive: true, $expr: { $lte: ["$onHandQty", "$lowStockThreshold"] } };
-    if (outletId) lowStockMatch.outletId = outletId;
+    const lowStockMatch = { businessId: new mongoose.Types.ObjectId(businessId), isActive: true, $expr: { $lte: ["$onHandQty", "$lowStockThreshold"] } };
+    if (outletId) lowStockMatch.outletId = new mongoose.Types.ObjectId(outletId);
+
+    const lowStockProdMatch = { ...lowStockMatch };
+    const prodTerm = String(lowStockSearch || "").trim();
+    if (prodTerm) {
+      const matchingProducts = await Product.find({
+        businessId,
+        $or: [
+          { name: { $regex: prodTerm, $options: "i" } },
+          { sku: { $regex: prodTerm, $options: "i" } }
+        ]
+      }).select("_id").lean();
+      lowStockProdMatch.productId = { $in: matchingProducts.map(p => p._id) };
+    }
 
     const [lowStockInventory, lowStockTotal] = await Promise.all([
-      Inventory.find(lowStockMatch)
+      Inventory.find(lowStockProdMatch)
         .sort({ onHandQty: 1 })
         .skip((Number(lowStockPage) - 1) * Number(lowStockLimit))
         .limit(Number(lowStockLimit))
@@ -234,7 +248,7 @@ async function getDashboardAnalytics(req, res, next) {
           populate: { path: "categoryId", select: "name icon color" }
         })
         .lean(),
-      Inventory.countDocuments(lowStockMatch)
+      Inventory.countDocuments(lowStockProdMatch)
     ]);
 
     const lowStockProducts = lowStockInventory
@@ -246,33 +260,71 @@ async function getDashboardAnalytics(req, res, next) {
       }));
 
     // ─── 3. Low-stock categories (group low-stock products by category) ───
-    const allLowStockForCategories = await Inventory.find(lowStockMatch)
-      .populate({
-        path: "productId",
-        select: "categoryId",
-        populate: { path: "categoryId", select: "name icon color" }
-      })
-      .lean();
+    const catTerm = String(lowStockCatSearch || "").trim();
+    
+    const catPipeline = [
+      { $match: lowStockMatch },
+      {
+        $lookup: {
+          from: "products",
+          localField: "productId",
+          foreignField: "_id",
+          as: "product",
+          pipeline: [{ $project: { categoryId: 1 } }]
+        }
+      },
+      { $unwind: { path: "$product", preserveNullAndEmptyArrays: true } },
+      {
+        $group: {
+          _id: "$product.categoryId",
+          count: { $sum: 1 },
+          criticalCount: { $sum: { $cond: [{ $lte: ["$onHandQty", 0] }, 1, 0] } }
+        }
+      },
+      {
+        $lookup: {
+          from: "categories",
+          localField: "_id",
+          foreignField: "_id",
+          as: "category"
+        }
+      },
+      { $unwind: { path: "$category", preserveNullAndEmptyArrays: true } }
+    ];
 
-    const lowStockCatMap = new Map();
-    for (const p of allLowStockForCategories) {
-      if (!p.productId) continue;
-      const catId = p.productId.categoryId?._id?.toString() || "uncategorized";
-      if (!lowStockCatMap.has(catId)) {
-        lowStockCatMap.set(catId, {
-          categoryId: p.productId.categoryId?._id || null,
-          name: p.productId.categoryId?.name || "Uncategorized",
-          icon: p.productId.categoryId?.icon || "📦",
-          color: p.productId.categoryId?.color || "#6366f1",
-          count: 0,
-          criticalCount: 0
-        });
-      }
-      const entry = lowStockCatMap.get(catId);
-      entry.count += 1;
-      if (p.onHandQty <= 0) entry.criticalCount += 1;
+    if (catTerm) {
+      catPipeline.push({
+        $match: {
+          "category.name": { $regex: catTerm, $options: "i" }
+        }
+      });
     }
-    const lowStockCategories = [...lowStockCatMap.values()].sort((a, b) => b.count - a.count);
+
+    catPipeline.push({ $sort: { count: -1 } });
+    
+    catPipeline.push({
+      $facet: {
+        items: [
+          { $skip: (Number(lowStockCatPage) - 1) * Number(lowStockCatLimit) },
+          { $limit: Number(lowStockCatLimit) }
+        ],
+        total: [{ $count: "count" }]
+      }
+    });
+
+    const lowStockCatAgg = await Inventory.aggregate(catPipeline);
+    const catFacet = lowStockCatAgg[0] || {};
+    const catItems = catFacet.items || [];
+    const catTotal = catFacet.total?.[0]?.count || 0;
+
+    const lowStockCategories = catItems.map(cat => ({
+      categoryId: cat._id || null,
+      name: cat.category?.name || "Uncategorized",
+      icon: cat.category?.icon || "📦",
+      color: cat.category?.color || "#6366f1",
+      count: cat.count,
+      criticalCount: cat.criticalCount
+    }));
 
     return successResponse({
       res,
@@ -316,7 +368,8 @@ async function getDashboardAnalytics(req, res, next) {
         },
         lowStockCategories: {
           items: lowStockCategories,
-          total: lowStockCategories.length
+          total: catTotal,
+          page: Number(lowStockCatPage)
         },
         salesTrend: agg.salesTrend || []
       }
