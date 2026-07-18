@@ -8,19 +8,42 @@ import { AuditLog } from "../models/AuditLog.js";
 import { resolveUnitCost, resolveUnitSellPrice, getMovementCount } from "../utils/stockCostUtils.js";
 import { withTransaction } from "../utils/transaction.js";
 
+import mongoose from "mongoose";
+
 async function getStockSummary(req, res, next) {
   try {
     const { businessId } = req.user;
     const { outletId } = req.query;
-    const query = { businessId, isActive: true };
-    if (outletId) query.outletId = outletId;
-    const inventory = await Inventory.find(query).select("onHandQty lowStockThreshold").lean();
-    const totalSkus = inventory.length;
-    const onHandTotal = inventory.reduce((sum, p) => sum + (p.onHandQty || 0), 0);
-    const lowStock = inventory.filter((p) => p.onHandQty <= p.lowStockThreshold).length;
+    
+    const match = { businessId: new mongoose.Types.ObjectId(businessId), isActive: true };
+    if (outletId) match.outletId = new mongoose.Types.ObjectId(outletId);
+    
+    const [result] = await Inventory.aggregate([
+      { $match: match },
+      {
+        $group: {
+          _id: null,
+          totalSkus: { $sum: 1 },
+          onHandTotal: { $sum: { $ifNull: ["$onHandQty", 0] } },
+          lowStock: {
+            $sum: {
+              $cond: [
+                { $lte: [{ $ifNull: ["$onHandQty", 0] }, { $ifNull: ["$lowStockThreshold", 10] }] },
+                1,
+                0
+              ]
+            }
+          }
+        }
+      }
+    ]);
+
+    const data = result || { totalSkus: 0, onHandTotal: 0, lowStock: 0 };
+    delete data._id;
+
     return successResponse({
       res: res,
-      data: { totalSkus, onHandTotal, lowStock }
+      data
     });
   } catch (error) {
     return next(error);
@@ -31,7 +54,13 @@ async function getStockAlerts(req, res, next) {
   try {
     const { businessId } = req.user;
     const { outletId } = req.query;
-    const query = { businessId, isActive: true };
+    
+    const query = { 
+      businessId, 
+      isActive: true,
+      $expr: { $lte: [{ $ifNull: ["$onHandQty", 0] }, { $ifNull: ["$lowStockThreshold", 10] }] }
+    };
+    
     if (outletId) query.outletId = outletId;
     
     const inventory = await Inventory.find(query)
@@ -54,10 +83,9 @@ async function getStockAlerts(req, res, next) {
         lowStockThreshold: i.lowStockThreshold
       }));
 
-    const alerts = products.filter((p) => p.onHandQty <= p.lowStockThreshold);
     return successResponse({
       res: res,
-      data: alerts
+      data: products
     });
   } catch (error) {
     return next(error);
@@ -66,9 +94,9 @@ async function getStockAlerts(req, res, next) {
 
 async function buildStockHistoryQuery(businessId, params) {
   const { productId, outletId, type, direction, search, startDate, endDate } = params;
-  const query = { businessId };
-  if (productId) query.productId = productId;
-  if (outletId) query.outletId = outletId;
+  const query = { businessId: new mongoose.Types.ObjectId(businessId) };
+  if (productId) query.productId = new mongoose.Types.ObjectId(productId);
+  if (outletId) query.outletId = new mongoose.Types.ObjectId(outletId);
   if (type) query.type = type;
   if (direction === "in") query.qty = { $gt: 0 };
   if (direction === "out") query.qty = { $lt: 0 };
@@ -112,7 +140,7 @@ async function getStockHistory(req, res, next) {
     const query = await buildStockHistoryQuery(businessId, filterParams);
     const skip = (Number(page) - 1) * Number(limit);
 
-    const [entries, total, summaryAgg] = await Promise.all([
+    const [entries, summaryAgg] = await Promise.all([
       StockEntry.find(query)
         .sort({ createdAt: -1 })
         .skip(skip)
@@ -121,12 +149,12 @@ async function getStockHistory(req, res, next) {
         .populate("packagingUnitId", "name abbreviation")
         .populate("createdBy", "name")
         .lean(),
-      StockEntry.countDocuments(query),
       StockEntry.aggregate([
         { $match: query },
         {
           $group: {
             _id: null,
+            totalDocuments: { $sum: 1 },
             totalInQty: { $sum: { $cond: [{ $gt: ["$qty", 0] }, "$qty", 0] } },
             totalOutQty: { $sum: { $cond: [{ $lt: ["$qty", 0] }, { $abs: "$qty" }, 0] } },
             entriesIn: { $sum: { $cond: [{ $gt: ["$qty", 0] }, 1, 0] } },
@@ -140,6 +168,7 @@ async function getStockHistory(req, res, next) {
     ]);
 
     const summary = summaryAgg[0] || {
+      totalDocuments: 0,
       totalInQty: 0,
       totalOutQty: 0,
       entriesIn: 0,
@@ -149,13 +178,27 @@ async function getStockHistory(req, res, next) {
       totalExpectedProfit: 0
     };
 
+    const total = summary.totalDocuments || 0;
+    const numLimit = Number(limit);
+    const numPage = Number(page);
+
+    const meta = {
+      pagination: {
+        page: numPage,
+        limit: numLimit,
+        total,
+        totalPages: Math.ceil(total / numLimit) || 1
+      }
+    };
+
     return successResponse({
       res: res,
       data: {
         entries,
         total,
         summary
-      }
+      },
+      meta
     });
   } catch (error) {
     return next(error);

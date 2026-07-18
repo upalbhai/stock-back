@@ -40,7 +40,7 @@ const stockEntrySchema = new Schema(
   },
   { timestamps: true }
 );
-stockEntrySchema.index({ businessId: 1, outletId: 1, productId: 1 });
+stockEntrySchema.index({ businessId: 1, outletId: 1, productId: 1, createdAt: -1 });
 stockEntrySchema.index({ businessId: 1, outletId: 1, createdAt: -1 });
 const StockEntry = mongoose.models.StockEntry || mongoose.model("StockEntry", stockEntrySchema);
 export {

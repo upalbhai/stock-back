@@ -20,7 +20,7 @@ const categorySchema = new Schema(
   },
   { timestamps: true }
 );
-categorySchema.index({ businessId: 1, parentId: 1, isActive: 1 });
+categorySchema.index({ businessId: 1, isActive: 1, parentId: 1, sortOrder: 1, name: 1 });
 categorySchema.index({ businessId: 1, slug: 1 }, { unique: true });
 const Category = mongoose.models.Category || mongoose.model("Category", categorySchema);
 export {

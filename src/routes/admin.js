@@ -20,7 +20,9 @@ import {
 } from "../controllers/admin/statsController.js";
 import {
   adminCreateManualSubscription,
-  adminCancelSubscription
+  adminCancelSubscription,
+  adminPreviewSubscriptionEmail,
+  adminSendSubscriptionEmail
 } from "../controllers/admin/subscriptionController.js";
 import { requireAuth, requireSuperAdmin } from "../middlewares/auth.js";
 import { validate } from "../middlewares/validate.js";
@@ -59,5 +61,7 @@ adminRouter.post("/impersonate", rateLimit("admin"), validate(adminImpersonateSc
 // Manual subscription routes
 adminRouter.post("/subscriptions/manual", rateLimit("admin"), adminCreateManualSubscription);
 adminRouter.post("/subscriptions/cancel", rateLimit("admin"), adminCancelSubscription);
+adminRouter.get("/businesses/:id/preview-email", rateLimit("admin"), validate(idParamSchema, "params"), adminPreviewSubscriptionEmail);
+adminRouter.post("/businesses/:id/send-email", rateLimit("admin"), validate(idParamSchema, "params"), adminSendSubscriptionEmail);
 
 export { adminRouter };

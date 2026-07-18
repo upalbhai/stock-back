@@ -54,19 +54,35 @@ async function listProducts(req, res, next) {
     const { outletId, categoryId, search, includeInactive, page = 1, limit = 50, cursor } = req.query;
     
     const productMatch = { businessId, isActive: true };
-    if (categoryId) productMatch.categoryId = categoryId;
+    let hasProductFilter = false;
+
+    if (categoryId) {
+      productMatch.categoryId = categoryId;
+      hasProductFilter = true;
+    }
     if (search) {
       productMatch.$or = [
         { name: { $regex: search, $options: "i" } },
         { sku: { $regex: search, $options: "i" } },
         { barcode: search }
       ];
+      hasProductFilter = true;
     }
     
-    const matchedProducts = await Product.find(productMatch).select("_id").lean();
-    const productIds = matchedProducts.map(p => p._id);
+    const query = { businessId };
+    
+    if (hasProductFilter) {
+      const matchedProducts = await Product.find(productMatch).select("_id").lean();
+      const productIds = matchedProducts.map(p => p._id);
+      query.productId = { $in: productIds };
+    } else {
+      // Optimization: Instead of loading 100k active product IDs, we load the few inactive ones and exclude them
+      const inactiveProducts = await Product.find({ businessId, isActive: false }).select("_id").lean();
+      if (inactiveProducts.length > 0) {
+        query.productId = { $nin: inactiveProducts.map(p => p._id) };
+      }
+    }
 
-    const query = { businessId, productId: { $in: productIds } };
     if (outletId) query.outletId = outletId;
     if (!includeInactive) query.isActive = true;
 

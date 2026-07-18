@@ -7,6 +7,7 @@ import { Product } from "../models/Product.js";
 import { Inventory } from "../models/Inventory.js";
 import { StockEntry } from "../models/StockEntry.js";
 import { lossReasonLabel, getOrderLineCost } from "../utils/stockCostUtils.js";
+import mongoose from "mongoose";
 
 function buildDateRangeQuery(from, to) {
   if (!from && !to) return null;
@@ -94,7 +95,7 @@ function enrichSaleEntry(entry, orderMap, productMap) {
 
   const product = productMap.get(productId) || entry.productId;
   const lineRevenueRaw = item.lineTotal ?? item.price * (item.qty || 0);
-  
+
   const orderDiscount = order.discount || 0;
   const orderSubtotal = order.subtotal || order.items.reduce((s, i) => s + (i.lineTotal ?? (i.price * (i.qty || 0))), 0);
   let lineDiscount = 0;
@@ -102,7 +103,7 @@ function enrichSaleEntry(entry, orderMap, productMap) {
     lineDiscount = orderDiscount * (lineRevenueRaw / orderSubtotal);
   }
   const lineRevenueNet = lineRevenueRaw - lineDiscount;
-  
+
   const lineCost = getOrderLineCost(product, item);
 
   return {
@@ -158,7 +159,7 @@ async function getDailyReport(req, res, next) {
         productSales[item.name].qty += item.qty;
         productSales[item.name].total += item.lineTotal;
       }
-      
+
       // Aggregate staff sales
       const staffName = order.createdBy?.name || "Unknown/Online";
       if (!staffSalesMap[staffName]) staffSalesMap[staffName] = { name: staffName, revenue: 0, orders: 0 };
@@ -409,12 +410,50 @@ function formatLedgerRow(entry) {
   };
 }
 
+const inventoryValuationCache = new Map();
+
+async function getInventoryValuation(businessId, outletId) {
+  const cacheKey = `${businessId}-${outletId || "all"}`;
+  const cached = inventoryValuationCache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < 5 * 60 * 1000) {
+    return cached.data;
+  }
+
+  const [inventories, products] = await Promise.all([
+    Inventory.find({ businessId, isActive: true, ...(outletId ? { outletId } : {}) })
+      .select("productId onHandQty").lean(),
+    Product.find({ businessId })
+      .select("_id costPrice price").lean()
+  ]);
+
+  const pMap = new Map();
+  for (let i = 0; i < products.length; i++) {
+    pMap.set(products[i]._id.toString(), products[i]);
+  }
+
+  let onHandCostValue = 0;
+  let onHandSellValue = 0;
+  for (let i = 0; i < inventories.length; i++) {
+    const inv = inventories[i];
+    if (!inv.productId) continue;
+    const p = pMap.get(inv.productId.toString());
+    if (p) {
+      onHandCostValue += (inv.onHandQty || 0) * (p.costPrice || 0);
+      onHandSellValue += (inv.onHandQty || 0) * (p.price || 0);
+    }
+  }
+
+  const result = { onHandCostValue, onHandSellValue };
+  inventoryValuationCache.set(cacheKey, { timestamp: Date.now(), data: result });
+  return result;
+}
+
 async function getProfitLedger(req, res, next) {
   try {
     const { businessId } = req.user;
     const { outletId, from, to, page = 1, limit = 50, search } = req.query;
-    const query = { businessId };
-    if (outletId) query.outletId = outletId;
+    const query = { businessId: new mongoose.Types.ObjectId(businessId) };
+    if (outletId) query.outletId = new mongoose.Types.ObjectId(outletId);
     const createdAt = buildDateRangeQuery(from, to);
     if (createdAt) query.createdAt = createdAt;
 
@@ -449,7 +488,7 @@ async function getProfitLedger(req, res, next) {
       }
     }
 
-    const [entries, total, summaryAgg, inventoryDocs] = await Promise.all([
+    const [entries, summaryAgg, valuation] = await Promise.all([
       StockEntry.find(query)
         .sort({ createdAt: -1 })
         .skip(skip)
@@ -457,12 +496,12 @@ async function getProfitLedger(req, res, next) {
         .populate("productId", "name unit price costPrice onHandQty packagingUnits")
         .populate("createdBy", "name")
         .lean(),
-      StockEntry.countDocuments(query),
       StockEntry.aggregate([
         { $match: query },
         {
           $group: {
             _id: null,
+            totalDocuments: { $sum: 1 },
             stockInvested: { $sum: { $cond: [{ $gt: ["$qty", 0] }, { $ifNull: ["$costValue", 0] }, 0] } },
             potentialMargin: { $sum: { $cond: [{ $gt: ["$qty", 0] }, { $ifNull: ["$expectedProfit", 0] }, 0] } },
             spoilageLoss: {
@@ -496,28 +535,19 @@ async function getProfitLedger(req, res, next) {
           }
         }
       ]),
-      Inventory.find({ businessId, isActive: true, ...(outletId ? { outletId } : {}) })
-        .populate({ path: "productId", select: "costPrice price packagingUnits" })
-        .lean()
+      getInventoryValuation(businessId, outletId)
     ]);
 
-    const products = inventoryDocs.filter(i => i.productId != null).map(i => ({
-      _id: i.productId._id,
-      onHandQty: i.onHandQty,
-      costPrice: i.productId.costPrice,
-      price: i.productId.price,
-      packagingUnits: i.productId.packagingUnits
-    }));
-
-    const productMap = new Map(products.map((p) => [p._id.toString(), p]));
-    for (const id of productIds) {
-      if (!productMap.has(id)) {
-        const p = await Product.findById(id).lean();
-        if (p) productMap.set(id, p);
+    const productMap = new Map();
+    if (productIds.size > 0) {
+      const prods = await Product.find({ _id: { $in: Array.from(productIds) } }).lean();
+      for (const p of prods) {
+        productMap.set(p._id.toString(), p);
       }
     }
 
     const raw = summaryAgg[0] || {
+      totalDocuments: 0,
       stockInvested: 0,
       potentialMargin: 0,
       spoilageLoss: 0,
@@ -526,8 +556,10 @@ async function getProfitLedger(req, res, next) {
       totalLoss: 0
     };
 
-    const onHandCostValue = products.reduce((s, p) => s + (p.onHandQty || 0) * (p.costPrice || 0), 0);
-    const onHandSellValue = products.reduce((s, p) => s + (p.onHandQty || 0) * (p.price || 0), 0);
+    const total = raw.totalDocuments || 0;
+
+    const onHandCostValue = valuation.onHandCostValue || 0;
+    const onHandSellValue = valuation.onHandSellValue || 0;
 
     const realizedRevenue = salesFromOrders.realizedRevenue;
     const realizedCost = salesFromOrders.realizedCost;
@@ -548,15 +580,26 @@ async function getProfitLedger(req, res, next) {
     const enrichedEntries = entries.map((e) => enrichSaleEntry(e, orderMap, productMap));
     const movements = enrichedEntries.map(formatLedgerRow);
 
+    const numLimit = Number(limit);
+    const numPage = Number(page);
+
+    const meta = {
+      pagination: {
+        page: numPage,
+        limit: numLimit,
+        total,
+        totalPages: Math.ceil(total / numLimit) || 1
+      }
+    };
+
     return successResponse({
       res,
       data: {
         summary,
         movements,
-        total,
-        page: Number(page),
-        pages: Math.ceil(total / Number(limit)) || 1
-      }
+        total
+      },
+      meta
     });
   } catch (error) {
     return next(error);

@@ -6,10 +6,10 @@
   "scripts": {
     "dev": "nodemon src/index.js",
     "start": "node src/index.js",
-    "seed": "node src/seed.js",
-    "seed:admin": "node src/seed-admin.js",
-    "seed:plans": "node src/seed-plans.js",
-    "seed:products": "node src/seed-products.js"
+    "seed": "node seed/seed.js",
+    "seed:admin": "node seed/seed-admin.js",
+    "seed:plans": "node seed/seed-plans.js",
+    "seed:products": "node seed/seed-products.js"
   },
   "dependencies": {
     "@socket.io/redis-adapter": "^8.3.0",
@@ -28,6 +28,7 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@faker-js/faker": "^10.5.0",
     "nodemon": "^3.1.4"
   }
 }

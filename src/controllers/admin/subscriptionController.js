@@ -6,6 +6,7 @@ import { Subscription } from "../../models/Subscription.js";
 import { AuditLog } from "../../models/AuditLog.js";
 import { applyPlanToBusiness } from "../../utils/syncBusinessPlan.js";
 import mailer from "../../utils/mailer.js";
+import { getSubscriptionConfirmationTemplate } from "../../utils/emailTemplates.js";
 import { getIO } from "../../config/socket.js";
 
 async function adminCreateManualSubscription(req, res, next) {
@@ -84,15 +85,7 @@ async function adminCreateManualSubscription(req, res, next) {
       ip: req.ip
     });
 
-    // Send confirmation email
-    const populatedBiz = await Business.findById(businessId).populate("ownerId", "email name");
-    if (populatedBiz?.ownerId?.email) {
-      try {
-        await mailer.sendSubscriptionConfirmation(populatedBiz.ownerId.email, plan.name, finalAmount, finalCurrency, calculatedEndDate);
-      } catch (e) {
-        console.warn("Failed to send subscription confirmation email:", e.message);
-      }
-    }
+    // Removed automatic email sending so admin can view and send manually
 
     try {
       getIO().to(`business:${businessId}`).emit("subscriptionUpdated");
@@ -171,7 +164,52 @@ async function adminCancelSubscription(req, res, next) {
   }
 }
 
+async function adminPreviewSubscriptionEmail(req, res, next) {
+  try {
+    const { id: businessId } = req.params;
+    const subscription = await Subscription.findOne({ businessId, status: "active" }).sort({ createdAt: -1 }).populate("planId");
+    if (!subscription) {
+      return errorResponse({ res, statusCode: 404, message: "Active subscription not found for this business" });
+    }
+    const { html } = getSubscriptionConfirmationTemplate(
+      subscription.planId.name,
+      subscription.amount,
+      subscription.currency,
+      subscription.endDate
+    );
+    return successResponse({ res, data: { html, subscriptionId: subscription._id } });
+  } catch (error) {
+    return next(error);
+  }
+}
+
+async function adminSendSubscriptionEmail(req, res, next) {
+  try {
+    const { id: businessId } = req.params;
+    const subscription = await Subscription.findOne({ businessId, status: "active" }).sort({ createdAt: -1 }).populate("planId");
+    if (!subscription) {
+      return errorResponse({ res, statusCode: 404, message: "Active subscription not found for this business" });
+    }
+    const business = await Business.findById(subscription.businessId).populate("ownerId");
+    if (!business || !business.ownerId?.email) {
+      return errorResponse({ res, statusCode: 400, message: "Business owner email not found" });
+    }
+    await mailer.sendSubscriptionConfirmation(
+      business.ownerId.email,
+      subscription.planId.name,
+      subscription.amount,
+      subscription.currency,
+      subscription.endDate
+    );
+    return successResponse({ res, data: { message: "Email sent successfully" } });
+  } catch (error) {
+    return next(error);
+  }
+}
+
 export {
   adminCreateManualSubscription,
-  adminCancelSubscription
+  adminCancelSubscription,
+  adminPreviewSubscriptionEmail,
+  adminSendSubscriptionEmail
 };
