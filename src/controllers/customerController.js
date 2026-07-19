@@ -38,17 +38,21 @@ async function listCustomers(req, res, next) {
     const query = conditions.length > 1 ? { $and: conditions } : conditions[0];
 
     const skip = (Number(page) - 1) * Number(limit);
-    const [customers, total] = await Promise.all([
+    const [customers, total, stats] = await Promise.all([
       Customer.find(query)
         .sort({ name: 1 })
         .skip(skip)
         .limit(Number(limit))
         .populate("createdBy", "name")
         .lean(),
-      Customer.countDocuments(query)
+      Customer.countDocuments(query),
+      Customer.aggregate([
+        { $match: query },
+        { $group: { _id: null, totalOutstanding: { $sum: "$outstandingBalance" } } }
+      ])
     ]);
 
-    const totalOutstanding = customers.reduce((s, c) => s + (c.outstandingBalance || 0), 0);
+    const totalOutstanding = stats[0]?.totalOutstanding || 0;
 
     return successResponse({
       res,
@@ -191,7 +195,7 @@ async function getCustomerLedger(req, res, next) {
     const txQuery = { businessId, customerId: customer._id };
     if (recordStatus === "active") txQuery.status = { $ne: "voided" };
     else if (recordStatus === "voided") txQuery.status = "voided";
-    
+
     if (from || to) {
       txQuery.createdAt = {};
       if (from) txQuery.createdAt.$gte = new Date(from);

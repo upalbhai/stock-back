@@ -446,7 +446,63 @@ async function listOrders(req, res, next) {
       if (to) query.createdAt.$lte = new Date(to);
     }
     const skip = (Number(page) - 1) * Number(limit);
-    const [orders, total, orderIds] = await Promise.all([
+
+    const paymentStatsPipeline = [
+      { $match: query },
+      {
+        $lookup: {
+          from: "payments",
+          localField: "_id",
+          foreignField: "orderId",
+          as: "paymentDetails"
+        }
+      },
+      { $unwind: "$paymentDetails" },
+      { $match: { "paymentDetails.method": { $ne: "credit" } } },
+      {
+        $group: {
+          _id: null,
+          cash: {
+            $sum: {
+              $cond: [
+                { $eq: ["$paymentDetails.method", "split"] },
+                { $ifNull: ["$paymentDetails.split.cash", 0] },
+                { $cond: [{ $eq: ["$paymentDetails.method", "cash"] }, { $ifNull: ["$paymentDetails.amount", 0] }, 0] }
+              ]
+            }
+          },
+          upi: {
+            $sum: {
+              $cond: [
+                { $eq: ["$paymentDetails.method", "split"] },
+                { $ifNull: ["$paymentDetails.split.upi", 0] },
+                { $cond: [{ $eq: ["$paymentDetails.method", "upi"] }, { $ifNull: ["$paymentDetails.amount", 0] }, 0] }
+              ]
+            }
+          },
+          card: {
+            $sum: {
+              $cond: [
+                { $eq: ["$paymentDetails.method", "split"] },
+                { $ifNull: ["$paymentDetails.split.card", 0] },
+                { $cond: [{ $eq: ["$paymentDetails.method", "card"] }, { $ifNull: ["$paymentDetails.amount", 0] }, 0] }
+              ]
+            }
+          },
+          wallet: {
+            $sum: {
+              $cond: [
+                { $eq: ["$paymentDetails.method", "split"] },
+                { $ifNull: ["$paymentDetails.split.wallet", 0] },
+                { $cond: [{ $eq: ["$paymentDetails.method", "wallet"] }, { $ifNull: ["$paymentDetails.amount", 0] }, 0] }
+              ]
+            }
+          }
+        }
+      }
+    ];
+
+    const [orders, total, paymentStats] = await Promise.all([
       Order.find(query)
         .sort({ createdAt: -1 })
         .skip(skip)
@@ -457,22 +513,11 @@ async function listOrders(req, res, next) {
         .populate("refundedBy", "name")
         .lean(),
       Order.countDocuments(query),
-      Order.find(query).distinct("_id")
+      Order.aggregate(paymentStatsPipeline)
     ]);
     
-    const paymentsRaw = await Payment.find({ orderId: { $in: orderIds } }).lean();
-    const payMap = { cash: 0, upi: 0, card: 0, wallet: 0 };
-    
-    for (const p of paymentsRaw) {
-      if (p.method === "split" && p.split) {
-        payMap.cash += Number(p.split.cash) || 0;
-        payMap.upi += Number(p.split.upi) || 0;
-        payMap.card += Number(p.split.card) || 0;
-        payMap.wallet += Number(p.split.wallet) || 0;
-      } else if (p.method && p.method !== "credit") {
-        payMap[p.method] = (payMap[p.method] || 0) + (Number(p.amount) || 0);
-      }
-    }
+    const payMap = paymentStats[0] || { cash: 0, upi: 0, card: 0, wallet: 0 };
+    delete payMap._id;
     
     const payments = Object.entries(payMap)
       .filter(([_, amount]) => amount > 0)

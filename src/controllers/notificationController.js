@@ -13,13 +13,14 @@ export async function listNotifications(req, res, next) {
       recipientId: req.user.userId
     };
 
-    const notifications = await Notification.find(query)
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limit)
-      .lean();
-
-    const total = await Notification.countDocuments(query);
+    const [notifications, total] = await Promise.all([
+      Notification.find(query)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean(),
+      Notification.countDocuments(query)
+    ]);
 
     return successResponse({
       res,

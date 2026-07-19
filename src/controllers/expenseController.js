@@ -22,7 +22,7 @@ async function listExpenses(req, res, next) {
       if (to) query.date.$lte = new Date(to);
     }
     const skip = (Number(page) - 1) * Number(limit);
-    const [expenses, total] = await Promise.all([
+    const [expenses, total, stats] = await Promise.all([
       Expense.find(query)
         .sort({ date: -1 })
         .skip(skip)
@@ -30,16 +30,32 @@ async function listExpenses(req, res, next) {
         .populate("createdBy", "name")
         .populate("voidedBy", "name")
         .lean(),
-      Expense.countDocuments(query)
+      Expense.countDocuments(query),
+      Expense.aggregate([
+        { $match: query },
+        { 
+          $group: { 
+            _id: null, 
+            totalAmount: { 
+              $sum: { 
+                $cond: [{ $eq: ["$status", "voided"] }, 0, "$amount"] 
+              } 
+            } 
+          } 
+        }
+      ])
     ]);
-    const activeExpenses = expenses.filter((e) => e.status !== "voided");
-    const totalAmount = activeExpenses.reduce((s, e) => s + e.amount, 0);
+
+    const totalAmount = stats[0]?.totalAmount || 0;
+
     return successResponse({
       res: res,
       data: {
         expenses,
         total,
-        totalAmount
+        totalAmount,
+        page: Number(page),
+        pages: Math.ceil(total / Number(limit))
       }
     });
   } catch (error) {

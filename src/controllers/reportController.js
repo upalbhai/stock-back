@@ -25,95 +25,7 @@ function buildDateRangeQuery(from, to) {
   return createdAt;
 }
 
-async function computeSalesFromOrders(businessId, { outletId, from, to }) {
-  const orderQuery = { businessId, status: "completed" };
-  if (outletId) orderQuery.outletId = outletId;
-  const createdAt = buildDateRangeQuery(from, to);
-  if (createdAt) orderQuery.createdAt = createdAt;
 
-  const orders = await Order.find(orderQuery)
-    .select("items total subtotal discount orderNumber createdAt outletId createdBy")
-    .populate("createdBy", "name")
-    .lean();
-
-  const productIds = new Set();
-  for (const order of orders) {
-    for (const item of order.items || []) {
-      if (item.productId) productIds.add(item.productId.toString());
-    }
-  }
-
-  const products = productIds.size
-    ? await Product.find({ _id: { $in: [...productIds] } }).lean()
-    : [];
-  const productMap = new Map(products.map((p) => [p._id.toString(), p]));
-
-  let realizedRevenue = 0;
-  let realizedCost = 0;
-
-  for (const order of orders) {
-    const orderDiscount = order.discount || 0;
-    const orderSubtotal = order.subtotal || order.items.reduce((s, i) => s + (i.lineTotal ?? (i.price * (i.qty || 0))), 0);
-
-    for (const item of order.items || []) {
-      const lineRevenueRaw = item.lineTotal ?? item.price * (item.qty || 0);
-      let lineDiscount = 0;
-      if (orderSubtotal > 0 && orderDiscount > 0) {
-        lineDiscount = orderDiscount * (lineRevenueRaw / orderSubtotal);
-      }
-      const lineRevenueNet = lineRevenueRaw - lineDiscount;
-
-      realizedRevenue += lineRevenueNet;
-      if (item.productId) {
-        const product = productMap.get(item.productId.toString());
-        realizedCost += getOrderLineCost(product, item);
-      }
-    }
-  }
-
-  return {
-    realizedRevenue,
-    realizedCost,
-    realizedGrossProfit: realizedRevenue - realizedCost,
-    ordersCount: orders.length,
-    orders
-  };
-}
-
-function enrichSaleEntry(entry, orderMap, productMap) {
-  if (entry.type !== "sale") return entry;
-
-  const orderId = entry.referenceId?.toString?.() || String(entry.referenceId || "");
-  const order = orderMap.get(orderId);
-  if (!order) return entry;
-
-  const productId = entry.productId?._id?.toString?.() || entry.productId?.toString?.() || "";
-  const item = (order.items || []).find(
-    (i) => i.productId?.toString() === productId
-  );
-  if (!item) return entry;
-
-  const product = productMap.get(productId) || entry.productId;
-  const lineRevenueRaw = item.lineTotal ?? item.price * (item.qty || 0);
-
-  const orderDiscount = order.discount || 0;
-  const orderSubtotal = order.subtotal || order.items.reduce((s, i) => s + (i.lineTotal ?? (i.price * (i.qty || 0))), 0);
-  let lineDiscount = 0;
-  if (orderSubtotal > 0 && orderDiscount > 0) {
-    lineDiscount = orderDiscount * (lineRevenueRaw / orderSubtotal);
-  }
-  const lineRevenueNet = lineRevenueRaw - lineDiscount;
-
-  const lineCost = getOrderLineCost(product, item);
-
-  return {
-    ...entry,
-    realizedRevenue: lineRevenueNet,
-    realizedCost: lineCost,
-    realizedProfit: lineRevenueNet - lineCost,
-    note: entry.note || `Order ${order.orderNumber}`
-  };
-}
 
 function todayRange() {
   const start = /* @__PURE__ */ new Date();
@@ -135,65 +47,133 @@ async function getDailyReport(req, res, next) {
     } else {
       ({ start, end } = todayRange());
     }
-    const query = { businessId, status: "completed", createdAt: { $gte: start, $lte: end } };
-    if (outletId) query.outletId = outletId;
-    const orders = await Order.find(query).populate("payments").populate("createdBy", "name").lean();
-    const totalSales = orders.reduce((s, o) => s + o.total, 0);
-    const totalOrders = orders.length;
-    const paymentSummary = { cash: 0, upi: 0, card: 0, wallet: 0, split: 0 };
-    for (const order of orders) {
-      for (const pmt of order.payments) {
-        if (pmt && typeof pmt === "object" && "method" in pmt) {
-          const method = pmt.method;
-          paymentSummary[method] = (paymentSummary[method] || 0) + pmt.amount;
+    const query = {
+      businessId: new mongoose.Types.ObjectId(businessId),
+      status: "completed",
+      createdAt: { $gte: start, $lte: end }
+    };
+    if (outletId) query.outletId = new mongoose.Types.ObjectId(outletId);
+
+    const [aggResult] = await Order.aggregate([
+      { $match: query },
+      {
+        $facet: {
+          metrics: [
+            {
+              $group: {
+                _id: null,
+                totalSales: { $sum: "$total" },
+                totalOrders: { $sum: 1 },
+                gstCollected: { $sum: { $ifNull: ["$tax", 0] } },
+                igstCollected: { $sum: { $ifNull: ["$igst", 0] } },
+                cgstCollected: { $sum: { $ifNull: ["$cgst", 0] } },
+                sgstCollected: { $sum: { $ifNull: ["$sgst", 0] } },
+                creditIssued: { $sum: { $ifNull: ["$amountDue", 0] } },
+                wholesaleSales: {
+                  $sum: { $cond: [{ $eq: ["$billingMode", "wholesale"] }, "$total", 0] }
+                },
+                invoicesGenerated: {
+                  $sum: {
+                    $cond: [
+                      { $and: [{ $ne: ["$invoiceNumber", null] }, { $ne: ["$invoiceNumber", ""] }] },
+                      1,
+                      0
+                    ]
+                  }
+                }
+              }
+            }
+          ],
+          paymentSummary: [
+            {
+              $lookup: {
+                from: "payments",
+                localField: "_id",
+                foreignField: "orderId",
+                as: "payments"
+              }
+            },
+            { $unwind: { path: "$payments", preserveNullAndEmptyArrays: false } },
+            {
+              $group: {
+                _id: "$payments.method",
+                amount: { $sum: "$payments.amount" }
+              }
+            }
+          ],
+          staffSales: [
+            {
+              $group: {
+                _id: "$createdBy",
+                revenue: { $sum: "$total" },
+                orders: { $sum: 1 }
+              }
+            },
+            {
+              $lookup: {
+                from: "users",
+                localField: "_id",
+                foreignField: "_id",
+                as: "user"
+              }
+            },
+            { $unwind: { path: "$user", preserveNullAndEmptyArrays: true } },
+            {
+              $project: {
+                name: { $ifNull: ["$user.name", "Unknown/Online"] },
+                revenue: 1,
+                orders: 1
+              }
+            },
+            { $sort: { revenue: -1 } }
+          ],
+          bestSelling: [
+            { $unwind: "$items" },
+            {
+              $group: {
+                _id: "$items.name",
+                qty: { $sum: "$items.qty" },
+                total: { $sum: "$items.lineTotal" }
+              }
+            },
+            {
+              $project: {
+                _id: 0,
+                name: "$_id",
+                qty: 1,
+                total: 1
+              }
+            },
+            { $sort: { qty: -1 } },
+            { $limit: 10 }
+          ]
         }
       }
+    ]);
+
+    const metrics = aggResult?.metrics?.[0] || {};
+    const paymentSummaryList = aggResult?.paymentSummary || [];
+    
+    const paymentSummary = { cash: 0, upi: 0, card: 0, wallet: 0, split: 0 };
+    for (const p of paymentSummaryList) {
+      if (p._id) paymentSummary[p._id] = p.amount;
     }
-    const productSales = {};
-    const staffSalesMap = {};
-
-    for (const order of orders) {
-      // Aggregate product sales
-      for (const item of order.items) {
-        if (!productSales[item.name]) productSales[item.name] = { name: item.name, qty: 0, total: 0 };
-        productSales[item.name].qty += item.qty;
-        productSales[item.name].total += item.lineTotal;
-      }
-
-      // Aggregate staff sales
-      const staffName = order.createdBy?.name || "Unknown/Online";
-      if (!staffSalesMap[staffName]) staffSalesMap[staffName] = { name: staffName, revenue: 0, orders: 0 };
-      staffSalesMap[staffName].revenue += order.total;
-      staffSalesMap[staffName].orders += 1;
-    }
-    const bestSelling = Object.values(productSales).sort((a, b) => b.qty - a.qty).slice(0, 10);
-    const staffSales = Object.values(staffSalesMap).sort((a, b) => b.revenue - a.revenue);
-
-    const gstCollected = orders.reduce((s, o) => s + (o.tax || 0), 0);
-    const wholesaleSales = orders
-      .filter((o) => o.billingMode === "wholesale")
-      .reduce((s, o) => s + o.total, 0);
-    const creditIssued = orders.reduce((s, o) => s + (o.amountDue || 0), 0);
-    const invoicesGenerated = orders.filter((o) => o.invoiceNumber).length;
-    const igstCollected = orders.reduce((s, o) => s + (o.igst || 0), 0);
-    const cgstCollected = orders.reduce((s, o) => s + (o.cgst || 0), 0);
-    const sgstCollected = orders.reduce((s, o) => s + (o.sgst || 0), 0);
 
     return successResponse({
       res: res,
       data: {
-        totalSales,
-        totalOrders,
+        totalSales: metrics.totalSales || 0,
+        totalOrders: metrics.totalOrders || 0,
         paymentSummary,
-        bestSelling,
-        staffSales,
-        gstCollected,
-        wholesaleSales,
-        creditIssued,
-        invoicesGenerated,
-        igstCollected,
-        cgstCollected,
-        sgstCollected
+        bestSelling: aggResult?.bestSelling || [],
+        staffSales: aggResult?.staffSales || [],
+        gstCollected: metrics.gstCollected || 0,
+        wholesaleSales: metrics.wholesaleSales || 0,
+        creditIssued: metrics.creditIssued || 0,
+        invoicesGenerated: metrics.invoicesGenerated || 0,
+        igstCollected: metrics.igstCollected || 0,
+        cgstCollected: metrics.cgstCollected || 0,
+        sgstCollected: metrics.sgstCollected || 0
       }
     });
   } catch (error) {
@@ -204,21 +184,34 @@ async function getOutletComparison(req, res, next) {
   try {
     const { businessId } = req.user;
     const { from, to } = req.query;
-    const { start, end } = from && to ? { start: new Date(from), end: new Date(to) } : todayRange();
     const outlets = await Outlet.find({ businessId, isActive: true }).lean();
-    const result = await Promise.all(outlets.map(async (outlet) => {
-      const orders = await Order.find({
-        businessId,
-        outletId: outlet._id,
-        status: "completed",
-        createdAt: { $gte: start, $lte: end }
-      }).select("total").lean();
-      const revenue = orders.reduce((s, o) => s + o.total, 0);
-      return { outlet: { id: outlet._id, name: outlet.name }, revenue, orders: orders.length };
-    }));
+    
+    const query = {
+      businessId: new mongoose.Types.ObjectId(businessId),
+      status: "completed",
+      createdAt: { $gte: start, $lte: end }
+    };
+    
+    const agg = await Order.aggregate([
+      { $match: query },
+      {
+        $group: {
+          _id: "$outletId",
+          revenue: { $sum: "$total" },
+          orders: { $sum: 1 }
+        }
+      }
+    ]);
+    
+    const aggMap = new Map(agg.map(a => [a._id?.toString(), a]));
+    
+    const result = outlets.map(outlet => {
+      const match = aggMap.get(outlet._id.toString()) || { revenue: 0, orders: 0 };
+      return { outlet: { id: outlet._id, name: outlet.name }, revenue: match.revenue, orders: match.orders };
+    });
+    
     return successResponse({
       res: res,
-
       data: {
         comparison: result
       }
@@ -233,19 +226,42 @@ async function getRevenueTrend(req, res, next) {
     const { outletId, days = 7 } = req.query;
     const numDays = Number(days);
     const trend = [];
+    
+    const d = new Date();
+    d.setDate(d.getDate() - (numDays - 1));
+    d.setHours(0, 0, 0, 0);
+    const start = d;
+    const end = new Date();
+    end.setHours(23, 59, 59, 999);
+    
+    const query = {
+      businessId: new mongoose.Types.ObjectId(businessId),
+      status: "completed",
+      createdAt: { $gte: start, $lte: end }
+    };
+    if (outletId) query.outletId = new mongoose.Types.ObjectId(outletId);
+
+    const agg = await Order.aggregate([
+      { $match: query },
+      {
+        $group: {
+          _id: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } },
+          revenue: { $sum: "$total" },
+          orders: { $sum: 1 }
+        }
+      }
+    ]);
+    
+    const aggMap = new Map(agg.map(a => [a._id, a]));
+    
     for (let i = numDays - 1; i >= 0; i--) {
-      const d = /* @__PURE__ */ new Date();
-      d.setDate(d.getDate() - i);
-      const start = new Date(d);
-      start.setHours(0, 0, 0, 0);
-      const end = new Date(d);
-      end.setHours(23, 59, 59, 999);
-      const query = { businessId, status: "completed", createdAt: { $gte: start, $lte: end } };
-      if (outletId) query.outletId = outletId;
-      const orders = await Order.find(query).select("total").lean();
-      const revenue = orders.reduce((s, o) => s + o.total, 0);
-      trend.push({ date: start.toISOString().split("T")[0], revenue, orders: orders.length });
+      const iterD = new Date();
+      iterD.setDate(iterD.getDate() - i);
+      const dateStr = iterD.toISOString().split("T")[0];
+      const match = aggMap.get(dateStr) || { revenue: 0, orders: 0 };
+      trend.push({ date: dateStr, revenue: match.revenue, orders: match.orders });
     }
+
     return successResponse({
       res: res,
 
@@ -283,25 +299,49 @@ async function getWholesaleSummary(req, res, next) {
     });
 
     const orderQuery = {
-      businessId,
+      businessId: new mongoose.Types.ObjectId(businessId),
       status: "completed",
       createdAt: { $gte: start, $lte: end }
     };
-    if (outletId) orderQuery.outletId = outletId;
+    if (outletId) orderQuery.outletId = new mongoose.Types.ObjectId(outletId);
 
-    const orders = await Order.find(orderQuery)
-      .select("total tax billingMode amountDue invoiceNumber igst cgst sgst supplyType")
-      .lean();
+    const [orderAgg] = await Order.aggregate([
+      { $match: orderQuery },
+      {
+        $group: {
+          _id: null,
+          totalSalesToday: { $sum: "$total" },
+          totalOrdersToday: { $sum: 1 },
+          gstCollectedToday: { $sum: { $ifNull: ["$tax", 0] } },
+          wholesaleSalesToday: {
+            $sum: { $cond: [{ $eq: ["$billingMode", "wholesale"] }, "$total", 0] }
+          },
+          creditIssuedToday: { $sum: { $ifNull: ["$amountDue", 0] } },
+          invoicesToday: {
+            $sum: {
+              $cond: [
+                { $and: [{ $ne: ["$invoiceNumber", null] }, { $ne: ["$invoiceNumber", ""] }] },
+                1,
+                0
+              ]
+            }
+          },
+          igstToday: { $sum: { $ifNull: ["$igst", 0] } },
+          cgstSgstToday: { $sum: { $add: [{ $ifNull: ["$cgst", 0] }, { $ifNull: ["$sgst", 0] }] } }
+        }
+      }
+    ]);
 
-    const totalSalesToday = orders.reduce((s, o) => s + o.total, 0);
-    const gstCollectedToday = orders.reduce((s, o) => s + (o.tax || 0), 0);
-    const wholesaleSalesToday = orders
-      .filter((o) => o.billingMode === "wholesale")
-      .reduce((s, o) => s + o.total, 0);
-    const creditIssuedToday = orders.reduce((s, o) => s + (o.amountDue || 0), 0);
-    const invoicesToday = orders.filter((o) => o.invoiceNumber).length;
-    const igstToday = orders.reduce((s, o) => s + (o.igst || 0), 0);
-    const cgstSgstToday = orders.reduce((s, o) => s + (o.cgst || 0) + (o.sgst || 0), 0);
+    const summary = orderAgg || {
+      totalSalesToday: 0,
+      totalOrdersToday: 0,
+      gstCollectedToday: 0,
+      wholesaleSalesToday: 0,
+      creditIssuedToday: 0,
+      invoicesToday: 0,
+      igstToday: 0,
+      cgstSgstToday: 0
+    };
 
     return successResponse({
       res,
@@ -309,14 +349,14 @@ async function getWholesaleSummary(req, res, next) {
         totalCreditOutstanding: creditAgg[0]?.total || 0,
         customersWithDue,
         totalCustomers: creditAgg[0]?.count || 0,
-        totalSalesToday,
-        totalOrdersToday: orders.length,
-        gstCollectedToday,
-        wholesaleSalesToday,
-        creditIssuedToday,
-        invoicesToday,
-        igstToday,
-        cgstSgstToday
+        totalSalesToday: summary.totalSalesToday || 0,
+        totalOrdersToday: summary.totalOrdersToday || 0,
+        gstCollectedToday: summary.gstCollectedToday || 0,
+        wholesaleSalesToday: summary.wholesaleSalesToday || 0,
+        creditIssuedToday: summary.creditIssuedToday || 0,
+        invoicesToday: summary.invoicesToday || 0,
+        igstToday: summary.igstToday || 0,
+        cgstSgstToday: summary.cgstSgstToday || 0
       }
     });
   } catch (error) {
@@ -478,17 +518,11 @@ async function getProfitLedger(req, res, next) {
 
     const skip = (Number(page) - 1) * Number(limit);
 
-    const salesFromOrders = await computeSalesFromOrders(businessId, { outletId, from, to });
-    const orderMap = new Map(salesFromOrders.orders.map((o) => [o._id.toString(), o]));
+    const orderQuery = { businessId, status: "completed" };
+    if (outletId) orderQuery.outletId = outletId;
+    if (createdAt) orderQuery.createdAt = createdAt;
 
-    const productIds = new Set();
-    for (const order of salesFromOrders.orders) {
-      for (const item of order.items || []) {
-        if (item.productId) productIds.add(item.productId.toString());
-      }
-    }
-
-    const [entries, summaryAgg, valuation] = await Promise.all([
+    const [entries, summaryAgg, valuation, ordersCount] = await Promise.all([
       StockEntry.find(query)
         .sort({ createdAt: -1 })
         .skip(skip)
@@ -504,6 +538,8 @@ async function getProfitLedger(req, res, next) {
             totalDocuments: { $sum: 1 },
             stockInvested: { $sum: { $cond: [{ $gt: ["$qty", 0] }, { $ifNull: ["$costValue", 0] }, 0] } },
             potentialMargin: { $sum: { $cond: [{ $gt: ["$qty", 0] }, { $ifNull: ["$expectedProfit", 0] }, 0] } },
+            realizedRevenue: { $sum: { $ifNull: ["$realizedRevenue", 0] } },
+            realizedCost: { $sum: { $ifNull: ["$realizedCost", 0] } },
             spoilageLoss: {
               $sum: {
                 $cond: [
@@ -535,16 +571,9 @@ async function getProfitLedger(req, res, next) {
           }
         }
       ]),
-      getInventoryValuation(businessId, outletId)
+      getInventoryValuation(businessId, outletId),
+      Order.countDocuments(orderQuery)
     ]);
-
-    const productMap = new Map();
-    if (productIds.size > 0) {
-      const prods = await Product.find({ _id: { $in: Array.from(productIds) } }).lean();
-      for (const p of prods) {
-        productMap.set(p._id.toString(), p);
-      }
-    }
 
     const raw = summaryAgg[0] || {
       totalDocuments: 0,
@@ -553,7 +582,9 @@ async function getProfitLedger(req, res, next) {
       spoilageLoss: 0,
       returnLoss: 0,
       replacementCost: 0,
-      totalLoss: 0
+      totalLoss: 0,
+      realizedRevenue: 0,
+      realizedCost: 0
     };
 
     const total = raw.totalDocuments || 0;
@@ -561,24 +592,23 @@ async function getProfitLedger(req, res, next) {
     const onHandCostValue = valuation.onHandCostValue || 0;
     const onHandSellValue = valuation.onHandSellValue || 0;
 
-    const realizedRevenue = salesFromOrders.realizedRevenue;
-    const realizedCost = salesFromOrders.realizedCost;
-    const realizedGrossProfit = salesFromOrders.realizedGrossProfit;
+    const realizedRevenue = raw.realizedRevenue || 0;
+    const realizedCost = raw.realizedCost || 0;
+    const realizedGrossProfit = realizedRevenue - realizedCost;
 
     const summary = {
       ...raw,
       realizedRevenue,
       realizedCost,
       realizedGrossProfit,
-      ordersCount: salesFromOrders.ordersCount,
+      ordersCount,
       netProfit: realizedGrossProfit - raw.totalLoss,
       onHandCostValue,
       onHandSellValue,
       onHandPotentialMargin: onHandSellValue - onHandCostValue
     };
 
-    const enrichedEntries = entries.map((e) => enrichSaleEntry(e, orderMap, productMap));
-    const movements = enrichedEntries.map(formatLedgerRow);
+    const movements = entries.map(formatLedgerRow);
 
     const numLimit = Number(limit);
     const numPage = Number(page);
