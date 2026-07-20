@@ -7,6 +7,7 @@ import { StockEntry } from "../models/StockEntry.js";
 import { AuditLog } from "../models/AuditLog.js";
 import { assertCanAddProduct } from "../utils/planLimits.js";
 import { withTransaction } from "../utils/transaction.js";
+import mongoose from "mongoose";
 
 async function validatePackagingUnits(businessId, packagingUnits) {
   if (!packagingUnits?.length) return [];
@@ -51,71 +52,177 @@ function mergeInventoryAndProduct(inventory) {
 async function listProducts(req, res, next) {
   try {
     const { businessId } = req.user;
-    const { outletId, categoryId, search, includeInactive, page = 1, limit = 50, cursor } = req.query;
-    
-    const productMatch = { businessId, isActive: true };
-    let hasProductFilter = false;
+    const { outletId, categoryId, search, scan, includeInactive, page = 1, limit = 50, cursor } = req.query;
+    const numLimit = Number(limit);
 
-    if (categoryId) {
-      productMatch.categoryId = categoryId;
-      hasProductFilter = true;
+    const pipeline = [];
+
+    // 1. Initial Match on Inventory
+    const inventoryMatch = {
+      businessId: new mongoose.Types.ObjectId(businessId),
+    };
+    if (outletId) {
+      inventoryMatch.outletId = new mongoose.Types.ObjectId(outletId);
     }
-    if (search) {
+    if (!includeInactive) {
+      inventoryMatch.isActive = true;
+    }
+    if (cursor) {
+      inventoryMatch._id = { $gt: new mongoose.Types.ObjectId(cursor) };
+    }
+    pipeline.push({ $match: inventoryMatch });
+
+    // 2. Build product match filters
+    const productMatch = {
+      businessId: new mongoose.Types.ObjectId(businessId)
+    };
+    
+    if (!includeInactive) {
+      productMatch.isActive = true;
+    }
+    if (categoryId) {
+      productMatch.categoryId = new mongoose.Types.ObjectId(categoryId);
+    }
+    
+    if (scan) {
+      productMatch.$or = [
+        { barcode: scan },
+        { sku: scan }
+      ];
+    } else if (search) {
       productMatch.$or = [
         { name: { $regex: search, $options: "i" } },
         { sku: { $regex: search, $options: "i" } },
         { barcode: search }
       ];
-      hasProductFilter = true;
     }
-    
-    const query = { businessId };
-    
-    if (hasProductFilter) {
-      const matchedProducts = await Product.find(productMatch).select("_id").lean();
-      const productIds = matchedProducts.map(p => p._id);
-      query.productId = { $in: productIds };
-    } else {
-      // Optimization: Instead of loading 100k active product IDs, we load the few inactive ones and exclude them
-      const inactiveProducts = await Product.find({ businessId, isActive: false }).select("_id").lean();
-      if (inactiveProducts.length > 0) {
-        query.productId = { $nin: inactiveProducts.map(p => p._id) };
+
+    // 3. Lookup Product and apply filters within the lookup pipeline
+    pipeline.push({
+      $lookup: {
+        from: "products",
+        let: { pId: "$productId" },
+        pipeline: [
+          { $match: { $expr: { $eq: ["$_id", "$$pId"] } } },
+          { $match: productMatch },
+          // Nested lookup for Category
+          {
+            $lookup: {
+              from: "categories",
+              localField: "categoryId",
+              foreignField: "_id",
+              as: "categoryId"
+            }
+          },
+          { $unwind: { path: "$categoryId", preserveNullAndEmptyArrays: true } },
+          // Nested lookup for Primary Unit
+          {
+            $lookup: {
+              from: "units",
+              localField: "unitId",
+              foreignField: "_id",
+              as: "unitId"
+            }
+          },
+          { $unwind: { path: "$unitId", preserveNullAndEmptyArrays: true } }
+        ],
+        as: "productId"
       }
+    });
+
+    // 4. Unwind the product (if it didn't match filters, it will be empty array, so this drops the inventory record)
+    pipeline.push({
+      $unwind: { path: "$productId", preserveNullAndEmptyArrays: false }
+    });
+
+    // 5. Lookup for packagingUnits.unitId
+    pipeline.push({
+      $lookup: {
+        from: "units",
+        localField: "productId.packagingUnits.unitId",
+        foreignField: "_id",
+        as: "pkgUnitsDocs"
+      }
+    });
+
+    // 6. Map the pkgUnitsDocs back into the packagingUnits array
+    pipeline.push({
+      $addFields: {
+        "productId.packagingUnits": {
+          $map: {
+            input: { $ifNull: ["$productId.packagingUnits", []] },
+            as: "pu",
+            in: {
+              $mergeObjects: [
+                "$$pu",
+                {
+                  unitId: {
+                    $arrayElemAt: [
+                      {
+                        $filter: {
+                          input: "$pkgUnitsDocs",
+                          as: "pud",
+                          cond: { $eq: ["$$pud._id", "$$pu.unitId"] }
+                        }
+                      },
+                      0
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    });
+    
+    // Clean up temporary docs array
+    pipeline.push({
+      $project: { pkgUnitsDocs: 0 }
+    });
+
+    // 7. Sort and Pagination
+    pipeline.push({ $sort: { _id: 1 } });
+    if (!cursor) {
+      pipeline.push({ $skip: (Number(page) - 1) * numLimit });
     }
+    pipeline.push({ $limit: numLimit });
 
-    if (outletId) query.outletId = outletId;
-    if (!includeInactive) query.isActive = true;
-
-    const numLimit = Number(limit);
-    if (cursor) {
-      query._id = { $gt: cursor };
-    }
-
-    const sortOption = { _id: 1 };
-
-    const inventoryDocs = await Inventory.find(query)
-      .populate({
-        path: "productId",
-        populate: [
-          { path: "categoryId", select: "name icon color parentId" },
-          { path: "unitId", select: "name abbreviation key" },
-          { path: "packagingUnits.unitId", select: "name abbreviation key" }
-        ]
-      })
-      .sort(sortOption)
-      .skip(cursor ? 0 : (Number(page) - 1) * numLimit)
-      .limit(numLimit)
-      .lean();
+    // 8. Execute the pipeline
+    const inventoryDocs = await Inventory.aggregate(pipeline);
 
     const mergedProducts = inventoryDocs.map(mergeInventoryAndProduct).filter(Boolean);
 
+    // 9. Meta calculation
     let meta = null;
     if (cursor !== undefined) {
       const hasNextPage = mergedProducts.length === numLimit;
       const nextCursor = hasNextPage ? inventoryDocs[inventoryDocs.length - 1]._id : null;
       meta = { cursor: { nextCursor, hasNextPage } };
     } else {
-      const total = await Inventory.countDocuments(query);
+      // Optimize count pipeline to only include what's necessary for filtering
+      const countPipeline = [
+        { $match: inventoryMatch },
+        {
+          $lookup: {
+            from: "products",
+            let: { pId: "$productId" },
+            pipeline: [
+              { $match: { $expr: { $eq: ["$_id", "$$pId"] } } },
+              { $match: productMatch }
+            ],
+            as: "productId"
+          }
+        },
+        {
+          $unwind: { path: "$productId", preserveNullAndEmptyArrays: false }
+        },
+        { $count: "total" }
+      ];
+      
+      const countResult = await Inventory.aggregate(countPipeline);
+      const total = countResult[0] ? countResult[0].total : 0;
+      
       meta = {
         pagination: {
           page: Number(page),
@@ -310,37 +417,88 @@ async function getGlobalProducts(req, res, next) {
     const { businessId } = req.user;
     const { outletId, search, page = 1, limit = 50 } = req.query; // outletId is the current outlet, so we can exclude products already in this outlet
 
-    const query = { businessId, isActive: true };
+    const numLimit = Number(limit);
+    const numPage = Number(page);
+
+    const pipeline = [];
+
+    const productMatch = { 
+      businessId: new mongoose.Types.ObjectId(businessId), 
+      isActive: true 
+    };
+
     if (search) {
-      query.$or = [
+      productMatch.$or = [
         { name: { $regex: search, $options: "i" } },
         { sku: { $regex: search, $options: "i" } },
         { barcode: search }
       ];
     }
     
-    let existingProductIds = [];
+    pipeline.push({ $match: productMatch });
+
     if (outletId) {
-      const existingInventory = await Inventory.find({ businessId, outletId, isActive: true }).select("productId").lean();
-      existingProductIds = existingInventory.map(i => i.productId);
+      pipeline.push({
+        $lookup: {
+          from: "inventories",
+          let: { pId: "$_id" },
+          pipeline: [
+            { 
+              $match: {
+                $expr: {
+                  $and: [
+                    { $eq: ["$productId", "$$pId"] },
+                    { $eq: ["$outletId", new mongoose.Types.ObjectId(outletId)] },
+                    { $eq: ["$isActive", true] }
+                  ]
+                }
+              }
+            },
+            { $project: { _id: 1 } }
+          ],
+          as: "existingInventory"
+        }
+      });
+
+      pipeline.push({
+        $match: {
+          existingInventory: { $size: 0 }
+        }
+      });
+      
+      pipeline.push({ $project: { existingInventory: 0 } });
     }
+
+    pipeline.push({
+      $lookup: {
+        from: "categories",
+        localField: "categoryId",
+        foreignField: "_id",
+        pipeline: [
+          { $project: { name: 1, icon: 1, color: 1, parentId: 1 } }
+        ],
+        as: "categoryId"
+      }
+    });
     
-    // Find products not currently in the outlet
-    if (existingProductIds.length > 0) {
-       query._id = { $nin: existingProductIds };
-    }
+    pipeline.push({
+      $unwind: { path: "$categoryId", preserveNullAndEmptyArrays: true }
+    });
 
-    const numLimit = Number(limit);
-    const numPage = Number(page);
+    pipeline.push({
+      $facet: {
+        metadata: [ { $count: "total" } ],
+        data: [
+          { $skip: (numPage - 1) * numLimit },
+          { $limit: numLimit }
+        ]
+      }
+    });
 
-    const [products, total] = await Promise.all([
-      Product.find(query)
-        .populate("categoryId", "name icon color parentId")
-        .skip((numPage - 1) * numLimit)
-        .limit(numLimit)
-        .lean(),
-      Product.countDocuments(query)
-    ]);
+    const results = await Product.aggregate(pipeline);
+    
+    const total = results[0].metadata[0] ? results[0].metadata[0].total : 0;
+    const products = results[0].data;
 
     const meta = {
       pagination: {
@@ -391,6 +549,78 @@ async function importProduct(req, res, next) {
   }
 }
 
+async function importProductsBulk(req, res, next) {
+  try {
+    const { businessId } = req.user;
+    const { outletId, productIds, importAll } = req.body;
+
+    if (!outletId) return errorResponse({ res, statusCode: 400, message: "outletId is required" });
+
+    let targets = [];
+    if (importAll) {
+      // Find all active products in the business
+      const allProducts = await Product.find({ businessId, isActive: true }).select("_id").lean();
+      const allProductIds = allProducts.map(p => p._id.toString());
+      
+      // Find existing inventories in this outlet
+      const existingInventory = await Inventory.find({ businessId, outletId }).select("productId").lean();
+      const existingProductIds = new Set(existingInventory.map(i => i.productId.toString()));
+      
+      // Filter out products that are already in the outlet (we only want ones NOT in the outlet at all)
+      targets = allProductIds.filter(id => !existingProductIds.has(id));
+
+      // Also grab inactive inventories in this outlet to reactivate them
+      const inactiveInventory = await Inventory.find({ businessId, outletId, isActive: false }).select("productId").lean();
+      const inactiveProductIds = inactiveInventory.map(i => i.productId.toString());
+
+      // Combine both lists (new items + inactive items to reactivate)
+      targets = [...new Set([...targets, ...inactiveProductIds])];
+    } else {
+      if (!Array.isArray(productIds) || productIds.length === 0) {
+        return errorResponse({ res, statusCode: 400, message: "productIds must be a non-empty array" });
+      }
+      targets = productIds;
+    }
+
+    if (targets.length === 0) {
+      return successResponse({ res, message: "No new products to import" });
+    }
+
+    // Perform bulk write to insert/update inventories
+    const bulkOps = targets.map(productId => ({
+      updateOne: {
+        filter: { productId, outletId, businessId },
+        update: {
+          $setOnInsert: {
+            onHandQty: 0,
+            lowStockThreshold: 10
+          },
+          $set: {
+            isActive: true
+          }
+        },
+        upsert: true
+      }
+    }));
+
+    await Inventory.bulkWrite(bulkOps);
+
+    await AuditLog.create({
+      businessId,
+      actorId: req.user?.userId,
+      module: "products",
+      action: "import",
+      targetType: "Product",
+      message: `Bulk imported ${targets.length} products to outlet ${outletId}`,
+      ip: req.ip
+    });
+
+    return successResponse({ res, statusCode: 201, message: `Successfully imported ${targets.length} products` });
+  } catch (error) {
+    return next(error);
+  }
+}
+
 export {
   createProduct,
   deleteProduct,
@@ -398,5 +628,6 @@ export {
   listProducts,
   updateProduct,
   getGlobalProducts,
-  importProduct
+  importProduct,
+  importProductsBulk
 };

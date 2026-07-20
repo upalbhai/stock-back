@@ -54,105 +54,103 @@ async function getDailyReport(req, res, next) {
     };
     if (outletId) query.outletId = new mongoose.Types.ObjectId(outletId);
 
-    const [aggResult] = await Order.aggregate([
-      { $match: query },
-      {
-        $facet: {
-          metrics: [
-            {
-              $group: {
-                _id: null,
-                totalSales: { $sum: "$total" },
-                totalOrders: { $sum: 1 },
-                gstCollected: { $sum: { $ifNull: ["$tax", 0] } },
-                igstCollected: { $sum: { $ifNull: ["$igst", 0] } },
-                cgstCollected: { $sum: { $ifNull: ["$cgst", 0] } },
-                sgstCollected: { $sum: { $ifNull: ["$sgst", 0] } },
-                creditIssued: { $sum: { $ifNull: ["$amountDue", 0] } },
-                wholesaleSales: {
-                  $sum: { $cond: [{ $eq: ["$billingMode", "wholesale"] }, "$total", 0] }
-                },
-                invoicesGenerated: {
-                  $sum: {
-                    $cond: [
-                      { $and: [{ $ne: ["$invoiceNumber", null] }, { $ne: ["$invoiceNumber", ""] }] },
-                      1,
-                      0
-                    ]
-                  }
-                }
+    const [metricsResult, paymentSummaryList, staffSales, bestSelling] = await Promise.all([
+      Order.aggregate([
+        { $match: query },
+        {
+          $group: {
+            _id: null,
+            totalSales: { $sum: "$total" },
+            totalOrders: { $sum: 1 },
+            gstCollected: { $sum: { $ifNull: ["$tax", 0] } },
+            igstCollected: { $sum: { $ifNull: ["$igst", 0] } },
+            cgstCollected: { $sum: { $ifNull: ["$cgst", 0] } },
+            sgstCollected: { $sum: { $ifNull: ["$sgst", 0] } },
+            creditIssued: { $sum: { $ifNull: ["$amountDue", 0] } },
+            wholesaleSales: {
+              $sum: { $cond: [{ $eq: ["$billingMode", "wholesale"] }, "$total", 0] }
+            },
+            invoicesGenerated: {
+              $sum: {
+                $cond: [
+                  { $and: [{ $ne: ["$invoiceNumber", null] }, { $ne: ["$invoiceNumber", ""] }] },
+                  1,
+                  0
+                ]
               }
             }
-          ],
-          paymentSummary: [
-            {
-              $lookup: {
-                from: "payments",
-                localField: "_id",
-                foreignField: "orderId",
-                as: "payments"
-              }
-            },
-            { $unwind: { path: "$payments", preserveNullAndEmptyArrays: false } },
-            {
-              $group: {
-                _id: "$payments.method",
-                amount: { $sum: "$payments.amount" }
-              }
-            }
-          ],
-          staffSales: [
-            {
-              $group: {
-                _id: "$createdBy",
-                revenue: { $sum: "$total" },
-                orders: { $sum: 1 }
-              }
-            },
-            {
-              $lookup: {
-                from: "users",
-                localField: "_id",
-                foreignField: "_id",
-                as: "user"
-              }
-            },
-            { $unwind: { path: "$user", preserveNullAndEmptyArrays: true } },
-            {
-              $project: {
-                name: { $ifNull: ["$user.name", "Unknown/Online"] },
-                revenue: 1,
-                orders: 1
-              }
-            },
-            { $sort: { revenue: -1 } }
-          ],
-          bestSelling: [
-            { $unwind: "$items" },
-            {
-              $group: {
-                _id: "$items.name",
-                qty: { $sum: "$items.qty" },
-                total: { $sum: "$items.lineTotal" }
-              }
-            },
-            {
-              $project: {
-                _id: 0,
-                name: "$_id",
-                qty: 1,
-                total: 1
-              }
-            },
-            { $sort: { qty: -1 } },
-            { $limit: 10 }
-          ]
+          }
         }
-      }
+      ]),
+      Order.aggregate([
+        { $match: query },
+        {
+          $lookup: {
+            from: "payments",
+            localField: "_id",
+            foreignField: "orderId",
+            as: "payments"
+          }
+        },
+        { $unwind: { path: "$payments", preserveNullAndEmptyArrays: false } },
+        {
+          $group: {
+            _id: "$payments.method",
+            amount: { $sum: "$payments.amount" }
+          }
+        }
+      ]),
+      Order.aggregate([
+        { $match: query },
+        {
+          $group: {
+            _id: "$createdBy",
+            revenue: { $sum: "$total" },
+            orders: { $sum: 1 }
+          }
+        },
+        {
+          $lookup: {
+            from: "users",
+            localField: "_id",
+            foreignField: "_id",
+            as: "user"
+          }
+        },
+        { $unwind: { path: "$user", preserveNullAndEmptyArrays: true } },
+        {
+          $project: {
+            name: { $ifNull: ["$user.name", "Unknown/Online"] },
+            revenue: 1,
+            orders: 1
+          }
+        },
+        { $sort: { revenue: -1 } }
+      ]),
+      Order.aggregate([
+        { $match: query },
+        { $unwind: "$items" },
+        {
+          $group: {
+            _id: "$items.name",
+            qty: { $sum: "$items.qty" },
+            total: { $sum: "$items.lineTotal" }
+          }
+        },
+        {
+          $project: {
+            _id: 0,
+            name: "$_id",
+            qty: 1,
+            total: 1
+          }
+        },
+        { $sort: { qty: -1 } },
+        { $limit: 10 }
+      ])
     ]);
 
-    const metrics = aggResult?.metrics?.[0] || {};
-    const paymentSummaryList = aggResult?.paymentSummary || [];
+    const metrics = metricsResult[0] || {};
     
     const paymentSummary = { cash: 0, upi: 0, card: 0, wallet: 0, split: 0 };
     for (const p of paymentSummaryList) {
@@ -165,8 +163,8 @@ async function getDailyReport(req, res, next) {
         totalSales: metrics.totalSales || 0,
         totalOrders: metrics.totalOrders || 0,
         paymentSummary,
-        bestSelling: aggResult?.bestSelling || [],
-        staffSales: aggResult?.staffSales || [],
+        bestSelling: bestSelling || [],
+        staffSales: staffSales || [],
         gstCollected: metrics.gstCollected || 0,
         wholesaleSales: metrics.wholesaleSales || 0,
         creditIssued: metrics.creditIssued || 0,
@@ -459,31 +457,46 @@ async function getInventoryValuation(businessId, outletId) {
     return cached.data;
   }
 
-  const [inventories, products] = await Promise.all([
-    Inventory.find({ businessId, isActive: true, ...(outletId ? { outletId } : {}) })
-      .select("productId onHandQty").lean(),
-    Product.find({ businessId })
-      .select("_id costPrice price").lean()
+  const match = { businessId: new mongoose.Types.ObjectId(businessId), isActive: true };
+  if (outletId) {
+    match.outletId = new mongoose.Types.ObjectId(outletId);
+  }
+
+  const aggResult = await Inventory.aggregate([
+    { $match: match },
+    {
+      $lookup: {
+        from: "products",
+        localField: "productId",
+        foreignField: "_id",
+        as: "product"
+      }
+    },
+    { $unwind: { path: "$product", preserveNullAndEmptyArrays: false } },
+    {
+      $group: {
+        _id: null,
+        onHandCostValue: {
+          $sum: {
+            $multiply: [
+              { $ifNull: ["$onHandQty", 0] },
+              { $ifNull: ["$product.costPrice", 0] }
+            ]
+          }
+        },
+        onHandSellValue: {
+          $sum: {
+            $multiply: [
+              { $ifNull: ["$onHandQty", 0] },
+              { $ifNull: ["$product.price", 0] }
+            ]
+          }
+        }
+      }
+    }
   ]);
 
-  const pMap = new Map();
-  for (let i = 0; i < products.length; i++) {
-    pMap.set(products[i]._id.toString(), products[i]);
-  }
-
-  let onHandCostValue = 0;
-  let onHandSellValue = 0;
-  for (let i = 0; i < inventories.length; i++) {
-    const inv = inventories[i];
-    if (!inv.productId) continue;
-    const p = pMap.get(inv.productId.toString());
-    if (p) {
-      onHandCostValue += (inv.onHandQty || 0) * (p.costPrice || 0);
-      onHandSellValue += (inv.onHandQty || 0) * (p.price || 0);
-    }
-  }
-
-  const result = { onHandCostValue, onHandSellValue };
+  const result = aggResult[0] || { onHandCostValue: 0, onHandSellValue: 0 };
   inventoryValuationCache.set(cacheKey, { timestamp: Date.now(), data: result });
   return result;
 }

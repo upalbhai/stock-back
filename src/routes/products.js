@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { listProducts, getProduct, createProduct, updateProduct, deleteProduct, getGlobalProducts, importProduct } from "../controllers/productController.js";
+import { listProducts, getProduct, createProduct, updateProduct, deleteProduct, getGlobalProducts, importProduct, importProductsBulk } from "../controllers/productController.js";
 import { requireAuth } from "../middlewares/auth.js";
 import { requirePermission } from "../middlewares/permission.js";
 import { validate } from "../middlewares/validate.js";
@@ -15,6 +15,7 @@ productRouter.get("/global", requireAuth, rateLimit("productSearch"), cacheRoute
 productRouter.get("/:id", requireAuth, rateLimit("productSearch"), validate(idParamSchema, "params"), getProduct);
 
 // Mutations invalidate the /api/products cache so users see fresh data immediately
+productRouter.post("/import-bulk", requireAuth, requirePermission("products", "create"), rateLimit("productCrud"), invalidateCache("/api/products"), importProductsBulk);
 productRouter.post("/:id/import", requireAuth, requirePermission("products", "create"), rateLimit("productCrud"), invalidateCache("/api/products"), validate(idParamSchema, "params"), importProduct);
 productRouter.post("/", requireAuth, requirePermission("products", "create"), rateLimit("productCrud"), invalidateCache("/api/products"), validate(productCreateSchema), createProduct);
 productRouter.patch("/:id", requireAuth, requirePermission("products", "update"), rateLimit("productCrud"), invalidateCache("/api/products"), validate(idParamSchema, "params"), validate(productUpdateSchema), updateProduct);
