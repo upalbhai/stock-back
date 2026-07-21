@@ -41,6 +41,8 @@ const productSchema = new Schema(
 productSchema.index({ businessId: 1, isActive: 1 });
 productSchema.index({ businessId: 1, categoryId: 1 });
 productSchema.index({ businessId: 1, name: "text", sku: "text" });
+productSchema.index({ businessId: 1, barcode: 1 }, { sparse: true });
+productSchema.index({ businessId: 1, sku: 1 }, { sparse: true });
 const Product = mongoose.models.Product || mongoose.model("Product", productSchema);
 export {
   Product

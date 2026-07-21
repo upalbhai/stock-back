@@ -55,9 +55,7 @@ async function listProducts(req, res, next) {
     const { outletId, categoryId, search, scan, includeInactive, page = 1, limit = 50, cursor } = req.query;
     const numLimit = Number(limit);
 
-    const pipeline = [];
-
-    // 1. Initial Match on Inventory
+    // 1. Build inventory filter (fast indexed query)
     const inventoryMatch = {
       businessId: new mongoose.Types.ObjectId(businessId),
     };
@@ -67,162 +65,124 @@ async function listProducts(req, res, next) {
     if (!includeInactive) {
       inventoryMatch.isActive = true;
     }
-    if (cursor) {
-      inventoryMatch._id = { $gt: new mongoose.Types.ObjectId(cursor) };
-    }
-    pipeline.push({ $match: inventoryMatch });
 
-    // 2. Build product match filters
+    // 2. Build product-level filters
     const productMatch = {
       businessId: new mongoose.Types.ObjectId(businessId)
     };
-    
     if (!includeInactive) {
       productMatch.isActive = true;
     }
     if (categoryId) {
       productMatch.categoryId = new mongoose.Types.ObjectId(categoryId);
     }
-    
+
+    const hasProductFilter = !!(categoryId || scan || search);
+
+    // 3. If scan/search, pre-filter product IDs from the Products collection
+    let filteredProductIds = null;
     if (scan) {
       productMatch.$or = [
         { barcode: scan },
         { sku: scan }
       ];
+      const matchedProducts = await Product.find(productMatch).select("_id").lean();
+      filteredProductIds = new Set(matchedProducts.map(p => p._id.toString()));
     } else if (search) {
       productMatch.$or = [
         { name: { $regex: search, $options: "i" } },
         { sku: { $regex: search, $options: "i" } },
         { barcode: search }
       ];
+      const matchedProducts = await Product.find(productMatch).select("_id").lean();
+      filteredProductIds = new Set(matchedProducts.map(p => p._id.toString()));
+    } else if (categoryId) {
+      const matchedProducts = await Product.find(productMatch).select("_id").lean();
+      filteredProductIds = new Set(matchedProducts.map(p => p._id.toString()));
     }
 
-    // 3. Lookup Product and apply filters within the lookup pipeline
-    pipeline.push({
-      $lookup: {
-        from: "products",
-        let: { pId: "$productId" },
-        pipeline: [
-          { $match: { $expr: { $eq: ["$_id", "$$pId"] } } },
-          { $match: productMatch },
-          // Nested lookup for Category
-          {
-            $lookup: {
-              from: "categories",
-              localField: "categoryId",
-              foreignField: "_id",
-              as: "categoryId"
-            }
-          },
-          { $unwind: { path: "$categoryId", preserveNullAndEmptyArrays: true } },
-          // Nested lookup for Primary Unit
-          {
-            $lookup: {
-              from: "units",
-              localField: "unitId",
-              foreignField: "_id",
-              as: "unitId"
-            }
-          },
-          { $unwind: { path: "$unitId", preserveNullAndEmptyArrays: true } }
-        ],
-        as: "productId"
-      }
-    });
-
-    // 4. Unwind the product (if it didn't match filters, it will be empty array, so this drops the inventory record)
-    pipeline.push({
-      $unwind: { path: "$productId", preserveNullAndEmptyArrays: false }
-    });
-
-    // 5. Lookup for packagingUnits.unitId
-    pipeline.push({
-      $lookup: {
-        from: "units",
-        localField: "productId.packagingUnits.unitId",
-        foreignField: "_id",
-        as: "pkgUnitsDocs"
-      }
-    });
-
-    // 6. Map the pkgUnitsDocs back into the packagingUnits array
-    pipeline.push({
-      $addFields: {
-        "productId.packagingUnits": {
-          $map: {
-            input: { $ifNull: ["$productId.packagingUnits", []] },
-            as: "pu",
-            in: {
-              $mergeObjects: [
-                "$$pu",
-                {
-                  unitId: {
-                    $arrayElemAt: [
-                      {
-                        $filter: {
-                          input: "$pkgUnitsDocs",
-                          as: "pud",
-                          cond: { $eq: ["$$pud._id", "$$pu.unitId"] }
-                        }
-                      },
-                      0
-                    ]
-                  }
-                }
-              ]
-            }
-          }
-        }
-      }
-    });
-    
-    // Clean up temporary docs array
-    pipeline.push({
-      $project: { pkgUnitsDocs: 0 }
-    });
-
-    // 7. Sort and Pagination
-    pipeline.push({ $sort: { _id: 1 } });
-    if (!cursor) {
-      pipeline.push({ $skip: (Number(page) - 1) * numLimit });
+    // 4. Query inventory — apply cursor or page-based pagination
+    let inventoryQuery = { ...inventoryMatch };
+    if (cursor) {
+      inventoryQuery._id = { $gt: new mongoose.Types.ObjectId(cursor) };
     }
-    pipeline.push({ $limit: numLimit });
 
-    // 8. Execute the pipeline
-    const inventoryDocs = await Inventory.aggregate(pipeline);
+    // If we have product-level filters, add $in constraint to inventory query
+    if (filteredProductIds !== null) {
+      inventoryQuery.productId = { $in: Array.from(filteredProductIds).map(id => new mongoose.Types.ObjectId(id)) };
+    }
 
-    const mergedProducts = inventoryDocs.map(mergeInventoryAndProduct).filter(Boolean);
-
-    // 9. Meta calculation
     let meta = null;
+
     if (cursor !== undefined) {
+      // Cursor-based: fetch limit+0 docs sorted by _id
+      const inventoryDocs = await Inventory.find(inventoryQuery)
+        .sort({ _id: 1 })
+        .limit(numLimit)
+        .lean();
+
+      const productIds = inventoryDocs.map(inv => inv.productId);
+
+      // Build inventory lookup map
+      const inventoryMap = new Map();
+      for (const inv of inventoryDocs) {
+        inventoryMap.set(inv.productId.toString(), inv);
+      }
+
+      // Fetch products with populates
+      const products = await Product.find({ _id: { $in: productIds } })
+        .populate({ path: "categoryId", select: "name icon color parentId" })
+        .populate({ path: "unitId", select: "name abbreviation key" })
+        .populate({ path: "packagingUnits.unitId", select: "name abbreviation key" })
+        .lean();
+
+      // Merge in the same order as inventory docs
+      const mergedProducts = inventoryDocs.map(inv => {
+        const product = products.find(p => p._id.toString() === inv.productId.toString());
+        if (!product) return null;
+        return mergeInventoryAndProduct({ ...inv, productId: product });
+      }).filter(Boolean);
+
       const hasNextPage = mergedProducts.length === numLimit;
       const nextCursor = hasNextPage ? inventoryDocs[inventoryDocs.length - 1]._id : null;
       meta = { cursor: { nextCursor, hasNextPage } };
+
+      return successResponse({ res, message: "Products fetched successfully", data: mergedProducts, meta });
     } else {
-      // Optimize count pipeline to only include what's necessary for filtering
-      const countPipeline = [
-        { $match: inventoryMatch },
-        {
-          $lookup: {
-            from: "products",
-            let: { pId: "$productId" },
-            pipeline: [
-              { $match: { $expr: { $eq: ["$_id", "$$pId"] } } },
-              { $match: productMatch }
-            ],
-            as: "productId"
-          }
-        },
-        {
-          $unwind: { path: "$productId", preserveNullAndEmptyArrays: false }
-        },
-        { $count: "total" }
-      ];
-      
-      const countResult = await Inventory.aggregate(countPipeline);
-      const total = countResult[0] ? countResult[0].total : 0;
-      
+      // Page-based: parallel count + data fetch
+      const skip = (Number(page) - 1) * numLimit;
+
+      const [total, inventoryDocs] = await Promise.all([
+        Inventory.countDocuments(inventoryQuery),
+        Inventory.find(inventoryQuery)
+          .sort({ _id: 1 })
+          .skip(skip)
+          .limit(numLimit)
+          .lean()
+      ]);
+
+      const productIds = inventoryDocs.map(inv => inv.productId);
+
+      // Build inventory lookup map
+      const inventoryMap = new Map();
+      for (const inv of inventoryDocs) {
+        inventoryMap.set(inv.productId.toString(), inv);
+      }
+
+      // Fetch products with populates
+      const products = await Product.find({ _id: { $in: productIds } })
+        .populate({ path: "categoryId", select: "name icon color parentId" })
+        .populate({ path: "unitId", select: "name abbreviation key" })
+        .populate({ path: "packagingUnits.unitId", select: "name abbreviation key" })
+        .lean();
+
+      // Merge in the same order as inventory docs
+      const mergedProducts = inventoryDocs.map(inv => {
+        const product = products.find(p => p._id.toString() === inv.productId.toString());
+        if (!product) return null;
+        return mergeInventoryAndProduct({ ...inv, productId: product });
+      }).filter(Boolean);
+
       meta = {
         pagination: {
           page: Number(page),
@@ -231,14 +191,9 @@ async function listProducts(req, res, next) {
           totalPages: Math.ceil(total / numLimit)
         }
       };
-    }
 
-    return successResponse({
-      res,
-      message: "Products fetched successfully",
-      data: mergedProducts,
-      meta
-    });
+      return successResponse({ res, message: "Products fetched successfully", data: mergedProducts, meta });
+    }
   } catch (error) {
     return next(error);
   }
@@ -415,7 +370,7 @@ async function deleteProduct(req, res, next) {
 async function getGlobalProducts(req, res, next) {
   try {
     const { businessId } = req.user;
-    const { outletId, search, page = 1, limit = 50 } = req.query; // outletId is the current outlet, so we can exclude products already in this outlet
+    const { outletId, search, page = 1, limit = 50 } = req.query;
 
     const numLimit = Number(limit);
     const numPage = Number(page);
@@ -432,31 +387,68 @@ async function getGlobalProducts(req, res, next) {
         { barcode: search }
       ];
     }
-    
-    if (outletId) {
-      const existingInventories = await Inventory.find(
-        { outletId: new mongoose.Types.ObjectId(outletId), isActive: true },
-        { productId: 1 }
-      ).lean();
-      
-      const existingProductIds = existingInventories.map(inv => inv.productId);
-      
-      if (existingProductIds.length > 0) {
-        productMatch._id = { $nin: existingProductIds };
-      }
+
+    // If no outletId filter, simple find + count
+    if (!outletId) {
+      const [total, products] = await Promise.all([
+        Product.countDocuments(productMatch),
+        Product.find(productMatch)
+          .populate({ path: "categoryId", select: "name icon color parentId" })
+          .skip((numPage - 1) * numLimit)
+          .limit(numLimit)
+          .lean()
+      ]);
+
+      return successResponse({
+        res,
+        message: "Global products fetched",
+        data: products,
+        meta: { pagination: { page: numPage, limit: numLimit, total, totalPages: Math.ceil(total / numLimit) } }
+      });
     }
 
-    const [total, products] = await Promise.all([
-      Product.countDocuments(productMatch),
-      Product.find(productMatch)
-        .populate({
-          path: "categoryId",
-          select: "name icon color parentId"
-        })
-        .skip((numPage - 1) * numLimit)
-        .limit(numLimit)
-        .lean()
-    ]);
+    // With outletId: use indexed $lookup anti-join instead of loading 100K IDs into $nin
+    const pipeline = [
+      { $match: productMatch },
+      {
+        $lookup: {
+          from: "inventories",
+          localField: "_id",
+          foreignField: "productId",
+          pipeline: [
+            { $match: { outletId: new mongoose.Types.ObjectId(outletId), isActive: true } },
+            { $limit: 1 },
+            { $project: { _id: 1 } }
+          ],
+          as: "_inv"
+        }
+      },
+      { $match: { _inv: { $size: 0 } } },
+      { $project: { _inv: 0 } },
+      {
+        $facet: {
+          metadata: [{ $count: "total" }],
+          data: [
+            { $skip: (numPage - 1) * numLimit },
+            { $limit: numLimit },
+            {
+              $lookup: {
+                from: "categories",
+                localField: "categoryId",
+                foreignField: "_id",
+                pipeline: [{ $project: { name: 1, icon: 1, color: 1, parentId: 1 } }],
+                as: "categoryId"
+              }
+            },
+            { $unwind: { path: "$categoryId", preserveNullAndEmptyArrays: true } }
+          ]
+        }
+      }
+    ];
+
+    const results = await Product.aggregate(pipeline);
+    const total = results[0].metadata[0] ? results[0].metadata[0].total : 0;
+    const products = results[0].data;
 
     const meta = {
       pagination: {

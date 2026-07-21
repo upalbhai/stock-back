@@ -15,6 +15,8 @@ const inventorySchema = new Schema(
 // Indexes for fast lookups
 inventorySchema.index({ businessId: 1, outletId: 1, isActive: 1, _id: 1 });
 inventorySchema.index({ outletId: 1, productId: 1 }, { unique: true });
+inventorySchema.index({ outletId: 1, isActive: 1, productId: 1 });
+inventorySchema.index({ businessId: 1, outletId: 1, productId: 1 });
 
 const Inventory = mongoose.models.Inventory || mongoose.model("Inventory", inventorySchema);
 
