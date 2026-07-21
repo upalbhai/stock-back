@@ -420,8 +420,6 @@ async function getGlobalProducts(req, res, next) {
     const numLimit = Number(limit);
     const numPage = Number(page);
 
-    const pipeline = [];
-
     const productMatch = { 
       businessId: new mongoose.Types.ObjectId(businessId), 
       isActive: true 
@@ -435,70 +433,30 @@ async function getGlobalProducts(req, res, next) {
       ];
     }
     
-    pipeline.push({ $match: productMatch });
-
     if (outletId) {
-      pipeline.push({
-        $lookup: {
-          from: "inventories",
-          let: { pId: "$_id" },
-          pipeline: [
-            { 
-              $match: {
-                $expr: {
-                  $and: [
-                    { $eq: ["$productId", "$$pId"] },
-                    { $eq: ["$outletId", new mongoose.Types.ObjectId(outletId)] },
-                    { $eq: ["$isActive", true] }
-                  ]
-                }
-              }
-            },
-            { $project: { _id: 1 } }
-          ],
-          as: "existingInventory"
-        }
-      });
-
-      pipeline.push({
-        $match: {
-          existingInventory: { $size: 0 }
-        }
-      });
+      const existingInventories = await Inventory.find(
+        { outletId: new mongoose.Types.ObjectId(outletId), isActive: true },
+        { productId: 1 }
+      ).lean();
       
-      pipeline.push({ $project: { existingInventory: 0 } });
+      const existingProductIds = existingInventories.map(inv => inv.productId);
+      
+      if (existingProductIds.length > 0) {
+        productMatch._id = { $nin: existingProductIds };
+      }
     }
 
-    pipeline.push({
-      $lookup: {
-        from: "categories",
-        localField: "categoryId",
-        foreignField: "_id",
-        pipeline: [
-          { $project: { name: 1, icon: 1, color: 1, parentId: 1 } }
-        ],
-        as: "categoryId"
-      }
-    });
-    
-    pipeline.push({
-      $unwind: { path: "$categoryId", preserveNullAndEmptyArrays: true }
-    });
-
-    pipeline.push({
-      $facet: {
-        metadata: [ { $count: "total" } ],
-        data: [
-          { $skip: (numPage - 1) * numLimit },
-          { $limit: numLimit }
-        ]
-      }
-    });
-
-    const results = await Product.aggregate(pipeline);
-    
-    const total = results[0].metadata[0] ? results[0].metadata[0].total : 0;
-    const products = results[0].data;
+    const [total, products] = await Promise.all([
+      Product.countDocuments(productMatch),
+      Product.find(productMatch)
+        .populate({
+          path: "categoryId",
+          select: "name icon color parentId"
+        })
+        .skip((numPage - 1) * numLimit)
+        .limit(numLimit)
+        .lean()
+    ]);
 
     const meta = {
       pagination: {
