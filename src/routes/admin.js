@@ -19,11 +19,19 @@ import {
   adminPlatformStats
 } from "../controllers/admin/statsController.js";
 import {
+  adminListSubscriptions,
   adminCreateManualSubscription,
   adminCancelSubscription,
   adminPreviewSubscriptionEmail,
   adminSendSubscriptionEmail
 } from "../controllers/admin/subscriptionController.js";
+import {
+  createSystemAdmin
+} from "../controllers/admin/adminUserController.js";
+import {
+  getSettings,
+  updateSettings
+} from "../controllers/admin/settingsController.js";
 import { requireAuth, requireSuperAdmin } from "../middlewares/auth.js";
 import { validate } from "../middlewares/validate.js";
 import { rateLimit } from "../middlewares/rateLimiter/index.js";
@@ -59,9 +67,17 @@ adminRouter.patch("/outlets/:id/status", rateLimit("admin"), validate(adminStatu
 adminRouter.post("/impersonate", rateLimit("admin"), validate(adminImpersonateSchema), adminImpersonate);
 
 // Manual subscription routes
+adminRouter.get("/subscriptions", rateLimit("admin"), adminListSubscriptions);
 adminRouter.post("/subscriptions/manual", rateLimit("admin"), adminCreateManualSubscription);
 adminRouter.post("/subscriptions/cancel", rateLimit("admin"), adminCancelSubscription);
 adminRouter.get("/businesses/:id/preview-email", rateLimit("admin"), validate(idParamSchema, "params"), adminPreviewSubscriptionEmail);
 adminRouter.post("/businesses/:id/send-email", rateLimit("admin"), validate(idParamSchema, "params"), adminSendSubscriptionEmail);
+
+// System Admin User Management
+adminRouter.post("/system-users", rateLimit("admin"), createSystemAdmin);
+
+// Global Platform Settings
+adminRouter.get("/settings", rateLimit("admin"), getSettings);
+adminRouter.put("/settings", rateLimit("admin"), updateSettings);
 
 export { adminRouter };

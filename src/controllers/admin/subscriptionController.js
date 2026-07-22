@@ -9,6 +9,55 @@ import mailer from "../../utils/mailer.js";
 import { getSubscriptionConfirmationTemplate } from "../../utils/emailTemplates.js";
 import { getIO } from "../../config/socket.js";
 
+async function adminListSubscriptions(req, res, next) {
+  try {
+    const page = parseInt(req.query.page, 10) || 1;
+    const limit = parseInt(req.query.limit, 10) || 10;
+    const skip = (page - 1) * limit;
+    const { status, search } = req.query;
+
+    const query = {};
+    if (status && status !== "all") {
+      query.status = status;
+    }
+
+    if (search) {
+      const businesses = await Business.find({ name: { $regex: search, $options: "i" } }).select('_id');
+      const businessIds = businesses.map(b => b._id);
+      query.businessId = { $in: businessIds };
+    }
+
+    const [subscriptions, total] = await Promise.all([
+      Subscription.find(query)
+        .populate("businessId", "name email status")
+        .populate("planId", "name monthlyPrice yearlyPrice")
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean(),
+      Subscription.countDocuments(query)
+    ]);
+
+    return successResponse({
+      res,
+      data: {
+        subscriptions
+      },
+      meta: {
+        pagination: {
+          page,
+          limit,
+          total,
+          totalPages: Math.ceil(total / limit)
+        }
+      }
+    });
+  } catch (error) {
+    return next(error);
+  }
+}
+
+
 async function adminCreateManualSubscription(req, res, next) {
   try {
     const { businessId, planId, billingCycle = "monthly", amount, currency, paymentReference, endDate, notes } = req.body;
@@ -208,6 +257,7 @@ async function adminSendSubscriptionEmail(req, res, next) {
 }
 
 export {
+  adminListSubscriptions,
   adminCreateManualSubscription,
   adminCancelSubscription,
   adminPreviewSubscriptionEmail,
