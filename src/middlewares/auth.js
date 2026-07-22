@@ -1,12 +1,30 @@
 import jwt from "jsonwebtoken";
 import { env } from "../config/env.js";
 import { Session } from "../models/Session.js";
+import { SystemSetting } from "../models/SystemSetting.js";
+
+let maintenanceModeCache = { isEnabled: false, lastFetched: 0 };
+const MAINTENANCE_CACHE_TTL = 60 * 1000; // 1 minute
+
+async function isMaintenanceModeEnabled() {
+  const now = Date.now();
+  if (now - maintenanceModeCache.lastFetched > MAINTENANCE_CACHE_TTL) {
+    try {
+      const settings = await SystemSetting.findOne().lean();
+      maintenanceModeCache.isEnabled = settings ? settings.maintenanceMode : false;
+      maintenanceModeCache.lastFetched = now;
+    } catch (e) {
+      // ignore db errors for cache update
+    }
+  }
+  return maintenanceModeCache.isEnabled;
+}
 
 // Throttle lastActiveAt updates — track per session, max once per 5 minutes
 const lastActiveCache = new Map();
 const ACTIVE_THROTTLE = 5 * 60 * 1000; // 5 minutes
 
-function requireAuth(req, res, next) {
+async function requireAuth(req, res, next) {
   if (req.user) return next();
   const authHeader = req.headers.authorization;
   if (!authHeader) {
@@ -19,6 +37,11 @@ function requireAuth(req, res, next) {
   try {
     const payload = jwt.verify(token, env.JWT_SECRET);
     req.user = payload;
+
+    const maintenance = await isMaintenanceModeEnabled();
+    if (maintenance && req.user.role !== "superadmin") {
+      return res.status(503).json({ message: "System is currently under maintenance. Please try again later." });
+    }
 
     // If session tracking is active (sessionId in token), validate session
     if (payload.sessionId) {

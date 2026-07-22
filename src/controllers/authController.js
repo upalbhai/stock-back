@@ -15,6 +15,7 @@ import { Role } from "../models/Role.js";
 import { AuditLog } from "../models/AuditLog.js";
 import { EmailOtp } from "../models/EmailOtp.js";
 import { Session } from "../models/Session.js";
+import { SystemSetting } from "../models/SystemSetting.js";
 import mailer from "../utils/mailer.js";
 import crypto from "crypto";
 import { parseDevice } from "../utils/parseDevice.js";
@@ -209,6 +210,15 @@ async function register(req, res, next) {
     return await withTransaction(async (session) => {
       const { name, email, password, phone, businessName, outletName, outletId } = req.body;
 
+      const settings = await SystemSetting.findOne().session(session) || { allowNewSignups: true, defaultTrialDays: 14 };
+      if (!settings.allowNewSignups) {
+        return errorResponse({
+          res: res,
+          statusCode: 403,
+          message: "New registrations are currently disabled on this platform."
+        });
+      }
+
       if (!businessName && !outletId) {
         return errorResponse({
           res: res,
@@ -247,7 +257,8 @@ async function register(req, res, next) {
       const bSlug = slugify(businessName);
       const bCode = `${bSlug}-${uuidv4().slice(0, 4)}`;
       const now = new Date();
-      const trialEnd = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000); // 7 days
+      const trialDays = settings.defaultTrialDays || 14;
+      const trialEnd = new Date(now.getTime() + trialDays * 24 * 60 * 60 * 1000);
 
       business = await new Business({
         name: businessName,
@@ -368,6 +379,15 @@ async function loginWithEmail(req, res, next) {
           res: res,
           statusCode: 401,
           message: "Password login not set up. Use OTP login instead."
+        });
+      }
+
+      const settings = await SystemSetting.findOne().session(session) || { maintenanceMode: false };
+      if (settings.maintenanceMode && user.role !== "superadmin") {
+        return errorResponse({
+          res: res,
+          statusCode: 503,
+          message: "System is currently under maintenance. Please try again later."
         });
       }
 
@@ -601,6 +621,15 @@ async function verifyLoginOtp(req, res, next) {
           res: res,
           statusCode: 404,
           message: "No user found for this email"
+        });
+      }
+
+      const settings = await SystemSetting.findOne().session(session) || { maintenanceMode: false };
+      if (settings.maintenanceMode && user.role !== "superadmin") {
+        return errorResponse({
+          res: res,
+          statusCode: 503,
+          message: "System is currently under maintenance. Please try again later."
         });
       }
 
