@@ -2,6 +2,7 @@ import { successResponse } from "../../utils/successResponse.js";
 import { errorResponse } from "../../utils/errorResponse.js";
 import { SystemSetting } from "../../models/SystemSetting.js";
 import { AuditLog } from "../../models/AuditLog.js";
+import { clearMaintenanceCache } from "../../middlewares/auth.js";
 
 async function getSettings(req, res, next) {
   try {
@@ -29,6 +30,7 @@ async function updateSettings(req, res, next) {
     if (globalAnnouncement !== undefined) settings.globalAnnouncement = globalAnnouncement;
     
     await settings.save();
+    clearMaintenanceCache();
 
     await AuditLog.create({
       actorId: req.user?.userId,

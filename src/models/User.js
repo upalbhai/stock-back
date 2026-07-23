@@ -12,7 +12,7 @@ const userSchema = new Schema(
     roleId: { type: Schema.Types.ObjectId, ref: "Role" },
     role: {
       type: String,
-      enum: ["superadmin", "owner", "manager", "staff"],
+      enum: ["superadmin", "owner", "manager", "staff", "agent"],
       default: "staff"
     },
     customPermissions: { type: [permissionSchema], default: [] },
@@ -26,7 +26,12 @@ const userSchema = new Schema(
     inviteTokenExpiry: { type: Date },
     lastLoginAt: { type: Date },
     lastLoginIp: { type: String },
-    lastLoginDevice: { type: String }
+    lastLoginDevice: { type: String },
+    status: {
+      type: String,
+      enum: ["pending_approval", "active", "suspended"],
+      default: "active"
+    }
   },
   { timestamps: true }
 );

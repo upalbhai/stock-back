@@ -11,7 +11,9 @@ import {
   getTrialExpiringEmailTemplate,
   getTrialExpiredEmailTemplate,
   getSubscriptionConfirmationTemplate,
-  getNewDeviceLoginTemplate
+  getNewDeviceLoginTemplate,
+  getAgentWelcomeLinkTemplate,
+  getManualPaymentInvoiceTemplate
 } from "./emailTemplates.js";
 
 const BREVO_API = "https://api.brevo.com/v3/smtp/email";
@@ -57,6 +59,12 @@ async function sendEmail({ to, subject, html, text }) {
 
 export async function sendOtpEmail(email, code) {
   const { subject, html } = getOtpEmailTemplate(code);
+  return sendEmail({ to: email, subject, html });
+}
+
+export async function sendAgentWelcomeLink(email, name, loginLink) {
+  if (!email) return;
+  const { subject, html } = getAgentWelcomeLinkTemplate(loginLink, name);
   return sendEmail({ to: email, subject, html });
 }
 
@@ -132,6 +140,12 @@ export async function sendNewDeviceLoginEmail(email, name, deviceInfo) {
   return sendEmail({ to: email, subject, html });
 }
 
+export async function sendManualPaymentInvoice(email, businessName, amount, currency, transactionId, planName, endDate) {
+  if (!email) return;
+  const { subject, html } = getManualPaymentInvoiceTemplate(businessName, amount, currency, transactionId, planName, endDate);
+  return sendEmail({ to: email, subject, html });
+}
+
 export default {
   sendEmail,
   sendOtpEmail,
@@ -145,5 +159,7 @@ export default {
   sendTrialExpiringEmail,
   sendTrialExpiredEmail,
   sendSubscriptionConfirmation,
-  sendNewDeviceLoginEmail
+  sendNewDeviceLoginEmail,
+  sendAgentWelcomeLink,
+  sendManualPaymentInvoice
 };

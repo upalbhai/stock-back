@@ -4,6 +4,7 @@ import helmet from "helmet";
 import morgan from "morgan";
 import { corsOrigins, env } from "./config/env.js";
 import { authRouter } from "./routes/auth.js";
+import agentRouter from "./routes/agent.js";
 import { businessRouter } from "./routes/businesses.js";
 import { outletRouter } from "./routes/outlets.js";
 import { categoryRouter } from "./routes/categories.js";
@@ -56,6 +57,7 @@ function createApp() {
     });
   });
   app.use("/api/auth", authRouter);
+  app.use("/api/agent", agentRouter);
   app.use("/api/admin", adminRouter);
   app.use("/api/plans", planRouter);
   app.use("/api/payments", paymentRouter);

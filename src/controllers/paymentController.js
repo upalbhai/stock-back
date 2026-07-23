@@ -234,5 +234,52 @@ export {
   createOrder,
   verifyPayment,
   webhookHandler,
-  getSubscriptionStatus
+  getSubscriptionStatus,
+  requestGracePeriod
 };
+
+// 5. Request Grace Period
+async function requestGracePeriod(req, res, next) {
+  try {
+    const businessId = req.user?.businessId;
+    if (!businessId) {
+      return errorResponse({ res, statusCode: 403, message: "Business not found" });
+    }
+
+    const business = await Business.findById(businessId);
+    if (!business) {
+      return errorResponse({ res, statusCode: 404, message: "Business not found" });
+    }
+
+    if (business.subscriptionStatus !== "payment_locked") {
+      return errorResponse({ res, statusCode: 400, message: "Grace period can only be requested from locked status" });
+    }
+
+    const gracePeriodEndsAt = new Date();
+    gracePeriodEndsAt.setDate(gracePeriodEndsAt.getDate() + 3);
+
+    business.subscriptionStatus = "grace_period";
+    business.gracePeriodEndsAt = gracePeriodEndsAt;
+    await business.save();
+
+    await AuditLog.create({
+      businessId,
+      actorId: req.user?.userId,
+      module: "billing",
+      action: "grace_period_requested",
+      message: `Requested 3-day grace period until ${gracePeriodEndsAt.toLocaleDateString()}`,
+      ip: req.ip
+    });
+
+    return successResponse({
+      res,
+      message: "Grace period activated successfully for 3 days",
+      data: {
+        subscriptionStatus: "grace_period",
+        gracePeriodEndsAt
+      }
+    });
+  } catch (error) {
+    return next(error);
+  }
+}

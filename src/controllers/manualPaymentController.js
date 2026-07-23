@@ -1,0 +1,137 @@
+import { successResponse } from "../utils/successResponse.js";
+import { errorResponse } from "../utils/errorResponse.js";
+import { Business } from "../models/Business.js";
+import { ManualPayment } from "../models/ManualPayment.js";
+import { AgentProfile } from "../models/AgentProfile.js";
+import { AuditLog } from "../models/AuditLog.js";
+import { withTransaction } from "../utils/transaction.js";
+
+// Owner: Upload a screenshot for manual payment
+export async function uploadManualPayment(req, res, next) {
+  try {
+    const { amount, currency, screenshotUrl } = req.body;
+    const businessId = req.user?.businessId;
+
+    if (!businessId) {
+      return errorResponse({ res, statusCode: 403, message: "Business not found" });
+    }
+
+    const business = await Business.findById(businessId).lean();
+    if (!business) {
+      return errorResponse({ res, statusCode: 404, message: "Business not found" });
+    }
+
+    const manualPayment = await ManualPayment.create({
+      businessId,
+      agentId: business.agentId,
+      amount,
+      currency: currency || business.customPlanDetails?.currency || "INR",
+      screenshotUrl,
+      status: "pending_verification"
+    });
+
+    return successResponse({ res, statusCode: 201, message: "Payment screenshot uploaded for verification", data: { paymentId: manualPayment._id } });
+  } catch (error) {
+    next(error);
+  }
+}
+
+// Admin: Get manual payments
+export async function getManualPayments(req, res, next) {
+  try {
+    const { status } = req.query;
+    const filter = {};
+    if (status) filter.status = status;
+    
+    const payments = await ManualPayment.find(filter)
+      .populate("businessId", "name email phone")
+      .populate("agentId", "name email")
+      .sort({ createdAt: -1 })
+      .lean();
+      
+    return successResponse({ res, data: { payments } });
+  } catch (error) {
+    next(error);
+  }
+}
+
+// Admin: Verify manual payment
+export async function verifyManualPayment(req, res, next) {
+  try {
+    return await withTransaction(async (session) => {
+      const { paymentId } = req.params;
+      
+      const payment = await ManualPayment.findById(paymentId).session(session);
+      if (!payment) return errorResponse({ res, statusCode: 404, message: "Payment not found" });
+
+      if (payment.status !== "pending_verification") {
+        return errorResponse({ res, statusCode: 400, message: "Payment is already processed" });
+      }
+
+      payment.status = "verified";
+      payment.verifiedBy = req.user.userId;
+
+      const business = await Business.findById(payment.businessId).populate("ownerId").session(session);
+      if (business) {
+        business.subscriptionStatus = "active";
+        // Typical manual plan might give 1 month or 1 year. We'll add 1 month for now.
+        const endDate = new Date(business.currentPeriodEnd && business.currentPeriodEnd > new Date() ? business.currentPeriodEnd : new Date());
+        endDate.setMonth(endDate.getMonth() + 1);
+        business.currentPeriodEnd = endDate;
+        business.currentPeriodStart = new Date();
+        await business.save({ session });
+      }
+
+      // Calculate agent commission
+      if (payment.agentId) {
+        const profile = await AgentProfile.findOne({ userId: payment.agentId }).session(session);
+        if (profile) {
+          const commission = (payment.amount * (profile.commissionPercentage || 0)) / 100;
+          
+          payment.commissionCalculated = true;
+          payment.commissionAmount = commission;
+
+          // Update wallets
+          let wallet = profile.wallets.find(w => w.currency === payment.currency);
+          if (!wallet) {
+            profile.wallets.push({ currency: payment.currency, pending: 0, paid: 0 });
+            wallet = profile.wallets[profile.wallets.length - 1];
+          }
+          wallet.pending += commission;
+          profile.totalSales += payment.amount;
+          
+          await profile.save({ session });
+        }
+      }
+
+      await payment.save({ session });
+
+      await AuditLog.create([{
+        businessId: payment.businessId,
+        actorId: req.user.userId,
+        module: "billing",
+        action: "manual_payment_verified",
+        message: `Verified manual payment of ${payment.amount} ${payment.currency}`,
+        ip: req.ip
+      }], { session });
+
+      // Send invoice email outside transaction (if it fails, we still want the tx to commit)
+      if (business?.ownerId?.email) {
+        // Fire and forget
+        mailer.sendManualPaymentInvoice(
+          business.ownerId.email,
+          business.name,
+          payment.amount,
+          payment.currency,
+          payment.screenshotUrl || "N/A",
+          "Custom Plan",
+          business.currentPeriodEnd
+        ).catch(err => console.error("Failed to send invoice:", err.message));
+      }
+
+      return successResponse({ res, message: "Payment verified successfully" });
+    });
+  } catch (error) {
+    next(error);
+  }
+}

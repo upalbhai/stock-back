@@ -9,7 +9,7 @@ async function requireActiveSubscription(req, res, next) {
       return res.status(401).json({ message: "Unauthorized" });
     }
 
-    if (role === "superadmin") {
+    if (role === "superadmin" || role === "agent") {
       return next();
     }
 
@@ -18,33 +18,45 @@ async function requireActiveSubscription(req, res, next) {
       return res.status(403).json({ message: "No business association found" });
     }
 
-    const business = await Business.findById(businessId).select("subscriptionStatus trialEndsAt currentPeriodEnd").lean();
+    const business = await Business.findById(businessId).select("subscriptionStatus trialEndsAt currentPeriodEnd gracePeriodEndsAt").lean();
     if (!business) {
       return res.status(403).json({ message: "Business not found" });
     }
 
     const now = new Date();
-    let isExpired = false;
+    let isLocked = false;
+    let newStatus = null;
+    let currentStatus = business.subscriptionStatus;
 
-    if (business.subscriptionStatus === "trial") {
+    if (currentStatus === "trial") {
       if (business.trialEndsAt && now > new Date(business.trialEndsAt)) {
-        isExpired = true;
+        newStatus = "payment_locked";
+        currentStatus = "payment_locked";
       }
-    } else if (business.subscriptionStatus === "active") {
+    } else if (currentStatus === "active") {
       if (business.currentPeriodEnd && now > new Date(business.currentPeriodEnd)) {
-        // Only mark expired if past the period end, you might want to add a grace period here in the future
-        isExpired = true;
+        newStatus = "payment_locked";
+        currentStatus = "payment_locked";
       }
-    } else if (business.subscriptionStatus === "expired" || business.subscriptionStatus === "cancelled") {
-      isExpired = true;
+    }
+    
+    if (currentStatus === "grace_period") {
+      if (business.gracePeriodEndsAt && now > new Date(business.gracePeriodEndsAt)) {
+        newStatus = "payment_locked";
+        currentStatus = "payment_locked";
+      }
     }
 
-    if (isExpired) {
-      // Update the db status if we just detected it's expired
-      if (business.subscriptionStatus !== "expired") {
-        await Business.findByIdAndUpdate(businessId, { subscriptionStatus: "expired" });
-      }
-      return res.status(403).json({ message: "Subscription expired", subscriptionExpired: true });
+    if (currentStatus === "payment_locked" || currentStatus === "expired" || currentStatus === "cancelled") {
+      isLocked = true;
+    }
+
+    if (newStatus) {
+      await Business.findByIdAndUpdate(businessId, { subscriptionStatus: newStatus });
+    }
+
+    if (isLocked) {
+      return res.status(403).json({ message: "Account locked pending payment", paymentLocked: true, status: currentStatus });
     }
 
     return next();

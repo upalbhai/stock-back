@@ -32,6 +32,15 @@ import {
   getSettings,
   updateSettings
 } from "../controllers/admin/settingsController.js";
+import {
+  getAgents,
+  approveAgent,
+  createAgent
+} from "../controllers/admin/adminAgentController.js";
+import {
+  verifyManualPayment,
+  getManualPayments
+} from "../controllers/manualPaymentController.js";
 import { requireAuth, requireSuperAdmin } from "../middlewares/auth.js";
 import { validate } from "../middlewares/validate.js";
 import { rateLimit } from "../middlewares/rateLimiter/index.js";
@@ -73,11 +82,19 @@ adminRouter.post("/subscriptions/cancel", rateLimit("admin"), adminCancelSubscri
 adminRouter.get("/businesses/:id/preview-email", rateLimit("admin"), validate(idParamSchema, "params"), adminPreviewSubscriptionEmail);
 adminRouter.post("/businesses/:id/send-email", rateLimit("admin"), validate(idParamSchema, "params"), adminSendSubscriptionEmail);
 
+adminRouter.get("/payments/manual", rateLimit("admin"), getManualPayments);
+adminRouter.put("/payments/manual/:paymentId/verify", rateLimit("admin"), verifyManualPayment);
+
 // System Admin User Management
 adminRouter.post("/system-users", rateLimit("admin"), createSystemAdmin);
 
 // Global Platform Settings
 adminRouter.get("/settings", rateLimit("admin"), getSettings);
 adminRouter.put("/settings", rateLimit("admin"), updateSettings);
+
+// Agents Management
+adminRouter.get("/agents", rateLimit("admin"), getAgents);
+adminRouter.post("/agents", rateLimit("admin"), createAgent);
+adminRouter.put("/agents/:agentId/approve", rateLimit("admin"), approveAgent);
 
 export { adminRouter };

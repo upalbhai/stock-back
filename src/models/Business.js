@@ -5,6 +5,7 @@ const businessSchema = new Schema(
     code: { type: String, required: true, unique: true, lowercase: true },
     slug: { type: String, unique: true, lowercase: true },
     ownerId: { type: Schema.Types.ObjectId, ref: "User", required: true },
+    agentId: { type: Schema.Types.ObjectId, ref: "User" },
     // Legacy plan field kept for backward compat — prefer planId
     plan: {
       type: String,
@@ -16,11 +17,12 @@ const businessSchema = new Schema(
     // Subscription & trial
     subscriptionStatus: {
       type: String,
-      enum: ["trial", "active", "expired", "cancelled"],
+      enum: ["trial", "grace_period", "payment_locked", "active", "expired", "cancelled"],
       default: "trial"
     },
     trialStartedAt: { type: Date },
     trialEndsAt: { type: Date },
+    gracePeriodEndsAt: { type: Date },
     currentPeriodStart: { type: Date },
     currentPeriodEnd: { type: Date },
     razorpayCustomerId: { type: String },
@@ -48,6 +50,18 @@ const businessSchema = new Schema(
       default: "retail"
     },
     enabledFeatures: { type: [String], default: [] },
+    customPlanDetails: {
+      price: { type: Number },
+      currency: { type: String, default: "INR" },
+      maxProducts: { type: Number },
+      maxOutlets: { type: Number },
+      enabledFeatures: { type: [String] }
+    },
+    billingMethod: {
+      type: String,
+      enum: ["standard", "manual"],
+      default: "standard"
+    },
     settings: {
       requireCustomerName: { type: Boolean, default: false },
       enableOnlineOrders: { type: Boolean, default: false },

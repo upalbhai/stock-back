@@ -26,6 +26,21 @@ const wrapHtml = (title, content) => `
 </html>
 `;
 
+export const getAgentWelcomeLinkTemplate = (loginLink, name) => {
+  return {
+    subject: "Welcome to Mini Hisab - Access Your Agent Account",
+    html: wrapHtml(
+      `Welcome to Mini Hisab, ${name || "Agent"}!`,
+      `<p style="margin-top: 0;">An Agent account has been created for you by the Administrator.</p>
+       <p>Click the button below to verify your email and instantly access your Agent Portal:</p>
+       <div style="margin: 32px 0; text-align: center;">
+         <a href="${loginLink}" style="display: inline-block; padding: 14px 28px; background-color: #0066CC; color: #FFFFFF; text-decoration: none; font-weight: 600; border-radius: 8px; font-size: 16px;">Verify & Access Portal</a>
+       </div>
+       <p style="margin-bottom: 0; font-size: 14px; color: #6C6C70;">Or copy and paste this link into your browser:<br><a href="${loginLink}" style="color: #0066CC; word-break: break-all;">${loginLink}</a></p>`
+    )
+  };
+};
+
 export const getOtpEmailTemplate = (code) => {
   return {
     subject: "Your login code",
@@ -213,6 +228,25 @@ export const getNewDeviceLoginTemplate = (name, deviceName, location, ip, time) 
        <div style="padding: 16px; background-color: #FFF2F1; border-radius: 8px; border-left: 4px solid #FF3B30;">
          <p style="margin: 0; color: #C22922; font-size: 14px;"><strong>If this wasn't you</strong>, please change your password immediately and revoke unknown sessions from your account settings.</p>
        </div>`
+    )
+  };
+};
+
+export const getManualPaymentInvoiceTemplate = (businessName, amount, currency, transactionId, planName, endDate) => {
+  const displayCurrency = currency || "INR";
+  return {
+    subject: `Payment Receipt & Invoice - ${businessName}`,
+    html: wrapHtml(
+      "Payment Received Successfully",
+      `<p style="margin-top: 0;">Dear ${businessName},</p>
+       <p>We have successfully verified your recent manual payment. Your subscription is now active.</p>
+       <table style="width: 100%; border-collapse: collapse; margin: 24px 0; background: #F5F5F7; border-radius: 8px; overflow: hidden; border: 1px solid #D9D9E0;">
+         <tr><td style="padding: 12px 16px; color: #6C6C70; font-size: 14px; border-bottom: 1px solid #D9D9E0;">Transaction ID</td><td style="padding: 12px 16px; font-weight: 600; text-align: right; border-bottom: 1px solid #D9D9E0;">${transactionId}</td></tr>
+         <tr><td style="padding: 12px 16px; color: #6C6C70; font-size: 14px; border-bottom: 1px solid #D9D9E0;">Plan/Features</td><td style="padding: 12px 16px; font-weight: 600; text-align: right; border-bottom: 1px solid #D9D9E0;">${planName || "Custom Plan"}</td></tr>
+         <tr><td style="padding: 12px 16px; color: #6C6C70; font-size: 14px; border-bottom: 1px solid #D9D9E0;">Amount Paid</td><td style="padding: 12px 16px; font-weight: 600; text-align: right; border-bottom: 1px solid #D9D9E0;">${displayCurrency} ${amount}</td></tr>
+         <tr><td style="padding: 12px 16px; color: #6C6C70; font-size: 14px;">Next Billing Date</td><td style="padding: 12px 16px; font-weight: 600; text-align: right;">${new Date(endDate).toLocaleDateString()}</td></tr>
+       </table>
+       <p style="margin-bottom: 0;">Thank you for your business! You can now log into your dashboard to access your features.</p>`
     )
   };
 };

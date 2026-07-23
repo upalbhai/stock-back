@@ -6,12 +6,16 @@ import { SystemSetting } from "../models/SystemSetting.js";
 let maintenanceModeCache = { isEnabled: false, lastFetched: 0 };
 const MAINTENANCE_CACHE_TTL = 60 * 1000; // 1 minute
 
+function clearMaintenanceCache() {
+  maintenanceModeCache.lastFetched = 0;
+}
+
 async function isMaintenanceModeEnabled() {
   const now = Date.now();
   if (now - maintenanceModeCache.lastFetched > MAINTENANCE_CACHE_TTL) {
     try {
       const settings = await SystemSetting.findOne().lean();
-      maintenanceModeCache.isEnabled = settings ? settings.maintenanceMode : false;
+      maintenanceModeCache.isEnabled = settings ? Boolean(settings.maintenanceMode) : false;
       maintenanceModeCache.lastFetched = now;
     } catch (e) {
       // ignore db errors for cache update
@@ -39,7 +43,7 @@ async function requireAuth(req, res, next) {
     req.user = payload;
 
     const maintenance = await isMaintenanceModeEnabled();
-    if (maintenance && req.user.role !== "superadmin") {
+    if (maintenance && req.user.role !== "superadmin" && !req.user.impersonating) {
       return res.status(503).json({ message: "System is currently under maintenance. Please try again later." });
     }
 
@@ -107,5 +111,6 @@ function requireSuperAdmin(req, res, next) {
 }
 export {
   requireAuth,
-  requireSuperAdmin
+  requireSuperAdmin,
+  clearMaintenanceCache
 };
