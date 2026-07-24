@@ -73,11 +73,26 @@ async function listProducts(req, res, next) {
     if (!includeInactive) {
       productMatch.isActive = true;
     }
+
+    // Process categoryId as single or comma-separated list
+    let categoryIds = [];
     if (categoryId) {
-      productMatch.categoryId = new mongoose.Types.ObjectId(categoryId);
+      if (Array.isArray(categoryId)) {
+        categoryIds = categoryId;
+      } else if (typeof categoryId === "string") {
+        categoryIds = categoryId.split(",").map(id => id.trim()).filter(Boolean);
+      }
+      
+      if (categoryIds.length > 0) {
+        if (categoryIds.length === 1) {
+          productMatch.categoryId = new mongoose.Types.ObjectId(categoryIds[0]);
+        } else {
+          productMatch.categoryId = { $in: categoryIds.map(id => new mongoose.Types.ObjectId(id)) };
+        }
+      }
     }
 
-    const hasProductFilter = !!(categoryId || scan || search);
+    const hasProductFilter = !!(categoryIds.length > 0 || scan || search);
 
     // 3. If scan/search, pre-filter product IDs from the Products collection
     let filteredProductIds = null;
@@ -96,7 +111,7 @@ async function listProducts(req, res, next) {
       ];
       const matchedProducts = await Product.find(productMatch).select("_id").lean();
       filteredProductIds = new Set(matchedProducts.map(p => p._id.toString()));
-    } else if (categoryId) {
+    } else if (categoryIds.length > 0) {
       const matchedProducts = await Product.find(productMatch).select("_id").lean();
       filteredProductIds = new Set(matchedProducts.map(p => p._id.toString()));
     }
