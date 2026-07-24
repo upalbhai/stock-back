@@ -104,6 +104,9 @@ async function buildAuthUserResponse(user, subscriptionOverrides = {}) {
     outlets = await Outlet.find({ businessId: user.businessId, isActive: true, status: "active" }).lean();
   }
 
+  const settings = await SystemSetting.findOne().lean();
+  const maintenanceMode = settings ? Boolean(settings.maintenanceMode) : false;
+
   return {
     id: user._id,
     name: user.name,
@@ -121,7 +124,8 @@ async function buildAuthUserResponse(user, subscriptionOverrides = {}) {
     businessProfile,
     planType,
     currency,
-    outlets
+    outlets,
+    maintenanceMode
   };
 }
 

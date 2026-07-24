@@ -216,10 +216,124 @@ async function adminSetBusinessStatus(req, res, next) {
   }
 }
 
+async function getPendingPlanRequests(req, res, next) {
+  try {
+    const { search, page = 1, limit = 20 } = req.query;
+    const query = { pendingCustomPlan: { $exists: true, $ne: null } };
+    if (search) query.name = { $regex: search, $options: "i" };
+    
+    const skip = (Number(page) - 1) * Number(limit);
+    const [businesses, total] = await Promise.all([
+      Business.find(query).populate("ownerId", "name phone email").populate("pendingCustomPlan.requestedBy", "name email").sort({ "pendingCustomPlan.requestedAt": -1 }).skip(skip).limit(Number(limit)).lean(),
+      Business.countDocuments(query)
+    ]);
+    
+    return successResponse({
+      res: res,
+      data: {
+        requests: businesses,
+        total
+      }
+    });
+  } catch (error) {
+    return next(error);
+  }
+}
+
+async function approvePlanRequest(req, res, next) {
+  try {
+    const { reason } = req.body;
+    const business = await Business.findById(req.params.id);
+    if (!business || !business.pendingCustomPlan) {
+      return errorResponse({ res, statusCode: 404, message: "No pending plan request found" });
+    }
+
+    const { price, currency, maxProducts, maxOutlets, enabledFeatures } = business.pendingCustomPlan;
+
+    business.customPlanDetails = {
+      price,
+      currency,
+      maxProducts,
+      maxOutlets,
+      enabledFeatures
+    };
+    if (maxProducts) business.maxProducts = maxProducts;
+    if (maxOutlets) business.maxOutlets = maxOutlets;
+    if (enabledFeatures) business.enabledFeatures = enabledFeatures;
+
+    business.pendingCustomPlan = undefined; // Clear it
+    business.lastPlanRequestStatus = {
+      status: "approved",
+      reason: reason || undefined,
+      date: new Date()
+    };
+
+    await business.save();
+
+    await AuditLog.create({
+      actorId: req.user?.userId,
+      module: "admin",
+      action: "admin_plan_change_approved",
+      targetType: "Business",
+      targetId: business._id,
+      targetName: business.name,
+      message: `Approved custom plan change for ${business.name}.${reason ? ` Reason: ${reason}` : ""}`,
+      ip: req.ip
+    });
+
+    try {
+      const { getIO } = await import("../../config/socket.js");
+      getIO().to(`business:${business._id.toString()}`).emit("subscriptionUpdated");
+    } catch (err) {
+      console.error("Socket emit failed", err);
+    }
+
+    return successResponse({ res, message: "Plan approved successfully" });
+  } catch (error) {
+    return next(error);
+  }
+}
+
+async function rejectPlanRequest(req, res, next) {
+  try {
+    const { reason } = req.body;
+    const business = await Business.findById(req.params.id);
+    if (!business || !business.pendingCustomPlan) {
+      return errorResponse({ res, statusCode: 404, message: "No pending plan request found" });
+    }
+
+    business.pendingCustomPlan = undefined;
+    business.lastPlanRequestStatus = {
+      status: "rejected",
+      reason: reason,
+      date: new Date()
+    };
+    await business.save();
+
+    await AuditLog.create({
+      actorId: req.user?.userId,
+      module: "admin",
+      action: "admin_plan_change_rejected",
+      targetType: "Business",
+      targetId: business._id,
+      targetName: business.name,
+      message: `Rejected custom plan change for ${business.name}. Reason: ${reason || "No reason provided"}`,
+      ip: req.ip
+    });
+
+    return successResponse({ res, message: "Plan rejected successfully" });
+  } catch (error) {
+    return next(error);
+  }
+}
+
 export {
   adminListBusinesses,
   adminToggleBusiness,
   adminUpdatePlan,
   adminApproveBusiness,
-  adminSetBusinessStatus
+  adminSetBusinessStatus,
+  getPendingPlanRequests,
+  approvePlanRequest,
+  rejectPlanRequest
 };

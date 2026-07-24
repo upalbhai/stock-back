@@ -117,10 +117,12 @@ export async function verifyManualPayment(req, res, next) {
           // Update wallets
           let wallet = profile.wallets.find(w => w.currency === payment.currency);
           if (!wallet) {
-            profile.wallets.push({ currency: payment.currency, pending: 0, paid: 0 });
+            profile.wallets.push({ currency: payment.currency, totalSales: 0, pending: 0, paid: 0 });
             wallet = profile.wallets[profile.wallets.length - 1];
           }
           wallet.pending += commission;
+          wallet.totalSales += payment.amount;
+          // Keep profile.totalSales updated for backward compatibility just in case
           profile.totalSales += payment.amount;
 
           await profile.save({ session });

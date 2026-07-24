@@ -94,7 +94,7 @@ export async function getAgentClients(req, res, next) {
     const totalPages = Math.ceil(total / limit) || 1;
 
     const clients = await Business.find(query)
-      .select("name email phone status subscriptionStatus customPlanDetails createdAt")
+      .select("name email phone status subscriptionStatus customPlanDetails pendingCustomPlan lastPlanRequestStatus createdAt")
       .sort({ createdAt: -1 })
       .skip((page - 1) * limit)
       .limit(limit)
@@ -209,23 +209,72 @@ export async function updateCustomPlan(req, res, next) {
     if (price < minPrice) {
       return errorResponse({ res, statusCode: 400, message: `Price too low. Minimum allowed for these limits is ${curr} ${minPrice.toFixed(2)}` });
     }
-    business.customPlanDetails = {
+    
+    // Instead of applying directly, store as pending request
+    business.pendingCustomPlan = {
       price,
-      currency: currency || "INR",
-      maxProducts,
-      maxOutlets,
-      enabledFeatures: enabledFeatures || []
+      currency: curr,
+      maxProducts: maxProducts || business.maxProducts,
+      maxOutlets: maxOutlets || business.maxOutlets,
+      enabledFeatures: enabledFeatures || business.enabledFeatures,
+      requestedAt: new Date(),
+      requestedBy: agentId
     };
-
-    if (enabledFeatures && Array.isArray(enabledFeatures)) {
-      business.enabledFeatures = enabledFeatures;
-    }
-    if (maxProducts) business.maxProducts = maxProducts;
-    if (maxOutlets) business.maxOutlets = maxOutlets;
 
     await business.save();
 
-    return successResponse({ res, message: "Custom plan updated successfully", data: { customPlanDetails: business.customPlanDetails } });
+    // Log the request
+    const { AuditLog } = await import("../models/AuditLog.js");
+    await AuditLog.create({
+      businessId: business._id,
+      actorId: agentId,
+      module: "billing",
+      action: "agent_plan_change_requested",
+      message: `Agent requested custom plan change. Pending admin approval.`,
+      ip: req.ip
+    });
+
+    return successResponse({ res, message: "Custom plan change requested. Pending admin approval.", data: { pendingCustomPlan: business.pendingCustomPlan } });
+  } catch (error) {
+    next(error);
+  }
+}
+
+// 6. Request Payout
+export async function requestPayout(req, res, next) {
+  try {
+    const { currency, amount } = req.body;
+    const agentId = req.user.userId;
+
+    if (!currency || !amount || amount <= 0) {
+      return errorResponse({ res, statusCode: 400, message: "Valid currency and amount are required" });
+    }
+
+    const { AgentProfile } = await import("../models/AgentProfile.js");
+    const { PayoutRequest } = await import("../models/PayoutRequest.js");
+
+    const profile = await AgentProfile.findOne({ userId: agentId });
+    if (!profile) {
+      return errorResponse({ res, statusCode: 404, message: "Profile not found" });
+    }
+
+    const wallet = profile.wallets.find(w => w.currency === currency);
+    if (!wallet) {
+      return errorResponse({ res, statusCode: 400, message: `No wallet found for currency ${currency}` });
+    }
+
+    if (wallet.pending < amount) {
+      return errorResponse({ res, statusCode: 400, message: `Insufficient pending balance in ${currency}. Available: ${wallet.pending}` });
+    }
+
+    // Create the payout request
+    const request = await PayoutRequest.create({
+      agentId,
+      currency,
+      amount
+    });
+
+    return successResponse({ res, statusCode: 201, message: "Payout request submitted successfully", data: request });
   } catch (error) {
     next(error);
   }

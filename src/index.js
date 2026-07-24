@@ -17,6 +17,12 @@ async function start() {
   const httpServer = http.createServer(app);
   
   initSocket(httpServer);
+  
+  // Initialize scheduled jobs
+  import("./cron/subscriptionReminders.js").then(({ initSubscriptionCron }) => {
+    initSubscriptionCron();
+  }).catch(err => logger.error("Failed to load subscription cron module", err));
+
 
   httpServer.listen(env.PORT, () => {
     logger.info(`API running on port ${env.PORT}`);

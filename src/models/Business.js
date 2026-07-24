@@ -57,6 +57,26 @@ const businessSchema = new Schema(
       maxOutlets: { type: Number },
       enabledFeatures: { type: [String] }
     },
+    pendingCustomPlan: {
+      price: { type: Number },
+      currency: { type: String },
+      maxProducts: { type: Number },
+      maxOutlets: { type: Number },
+      enabledFeatures: { type: [String] },
+      requestedAt: { type: Date },
+      requestedBy: { type: Schema.Types.ObjectId, ref: "User" }
+    },
+    lastPlanRequestStatus: {
+      status: { type: String, enum: ["approved", "rejected"] },
+      reason: { type: String },
+      date: { type: Date }
+    },
+    reminders: {
+      trialExpiringSentAt: { type: Date, default: null },
+      trialExpiredSentAt: { type: Date, default: null },
+      gracePeriodStartedSentAt: { type: Date, default: null },
+      accountLockedSentAt: { type: Date, default: null }
+    },
     billingMethod: {
       type: String,
       enum: ["standard", "manual"],

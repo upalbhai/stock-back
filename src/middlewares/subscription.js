@@ -53,6 +53,12 @@ async function requireActiveSubscription(req, res, next) {
 
     if (newStatus) {
       await Business.findByIdAndUpdate(businessId, { subscriptionStatus: newStatus });
+      try {
+        const { getIO } = await import("../config/socket.js");
+        getIO().to(`business:${businessId}`).emit("subscriptionUpdated");
+      } catch (err) {
+        console.error("Socket emit failed on subscription status update", err);
+      }
     }
 
     if (isLocked) {

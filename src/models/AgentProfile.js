@@ -2,6 +2,7 @@ import mongoose, { Schema } from "mongoose";
 
 const walletSchema = new Schema({
   currency: { type: String, required: true },
+  totalSales: { type: Number, default: 0 },
   pending: { type: Number, default: 0 },
   paid: { type: Number, default: 0 }
 }, { _id: false });

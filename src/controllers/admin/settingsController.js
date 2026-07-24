@@ -40,6 +40,15 @@ async function updateSettings(req, res, next) {
       ip: req.ip
     });
 
+    try {
+      if (maintenanceMode !== undefined) {
+        const { getIO } = await import("../../config/socket.js");
+        getIO().emit("maintenanceUpdated", { isEnabled: maintenanceMode });
+      }
+    } catch (e) {
+      console.error("Failed to emit maintenance socket event", e);
+    }
+
     return successResponse({ res, data: { settings }, message: "Settings updated successfully" });
   } catch (error) {
     return next(error);

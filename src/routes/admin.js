@@ -4,7 +4,10 @@ import {
   adminToggleBusiness,
   adminUpdatePlan,
   adminApproveBusiness,
-  adminSetBusinessStatus
+  adminSetBusinessStatus,
+  getPendingPlanRequests,
+  approvePlanRequest,
+  rejectPlanRequest
 } from "../controllers/admin/businessController.js";
 import {
   adminApproveOutlet,
@@ -72,6 +75,12 @@ adminRouter.patch("/businesses/:id/toggle", rateLimit("admin"), validate(idParam
 adminRouter.patch("/businesses/:id/approve", rateLimit("admin"), validate(idParamSchema, "params"), adminApproveBusiness);
 adminRouter.patch("/businesses/:id/status", rateLimit("admin"), validate(adminStatusSchema), adminSetBusinessStatus);
 adminRouter.patch("/businesses/:id/plan", rateLimit("admin"), validate(adminPlanSchema), adminUpdatePlan);
+
+// Plan Change Requests
+adminRouter.get("/businesses/pending-plans", rateLimit("admin"), getPendingPlanRequests);
+adminRouter.post("/businesses/:id/approve-plan", rateLimit("admin"), validate(idParamSchema, "params"), approvePlanRequest);
+adminRouter.post("/businesses/:id/reject-plan", rateLimit("admin"), validate(idParamSchema, "params"), rejectPlanRequest);
+
 adminRouter.patch("/outlets/:id/approve", rateLimit("admin"), validate(idParamSchema, "params"), adminApproveOutlet);
 adminRouter.patch("/outlets/:id/status", rateLimit("admin"), validate(adminStatusSchema), adminSetOutletStatus);
 adminRouter.post("/impersonate", rateLimit("admin"), validate(adminImpersonateSchema), adminImpersonate);
