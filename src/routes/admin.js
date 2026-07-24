@@ -39,7 +39,8 @@ import {
 } from "../controllers/admin/adminAgentController.js";
 import {
   verifyManualPayment,
-  getManualPayments
+  getManualPayments,
+  resendManualPaymentInvoice
 } from "../controllers/manualPaymentController.js";
 import { requireAuth, requireSuperAdmin } from "../middlewares/auth.js";
 import { validate } from "../middlewares/validate.js";
@@ -84,6 +85,7 @@ adminRouter.post("/businesses/:id/send-email", rateLimit("admin"), validate(idPa
 
 adminRouter.get("/payments/manual", rateLimit("admin"), getManualPayments);
 adminRouter.put("/payments/manual/:paymentId/verify", rateLimit("admin"), verifyManualPayment);
+adminRouter.post("/payments/manual/:paymentId/resend-invoice", rateLimit("admin"), resendManualPaymentInvoice);
 
 // System Admin User Management
 adminRouter.post("/system-users", rateLimit("admin"), createSystemAdmin);

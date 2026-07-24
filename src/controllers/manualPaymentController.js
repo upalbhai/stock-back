@@ -5,6 +5,7 @@ import { ManualPayment } from "../models/ManualPayment.js";
 import { AgentProfile } from "../models/AgentProfile.js";
 import { AuditLog } from "../models/AuditLog.js";
 import { withTransaction } from "../utils/transaction.js";
+import mailer from "../utils/mailer.js";
 
 // Owner: Upload a screenshot for manual payment
 export async function uploadManualPayment(req, res, next) {
@@ -39,17 +40,39 @@ export async function uploadManualPayment(req, res, next) {
 // Admin: Get manual payments
 export async function getManualPayments(req, res, next) {
   try {
-    const { status } = req.query;
+    const { status, page = 1, limit = 10, search } = req.query;
     const filter = {};
     if (status) filter.status = status;
-    
-    const payments = await ManualPayment.find(filter)
-      .populate("businessId", "name email phone")
-      .populate("agentId", "name email")
-      .sort({ createdAt: -1 })
-      .lean();
-      
-    return successResponse({ res, data: { payments } });
+
+    const skip = (Number(page) - 1) * Number(limit);
+
+    // We can't easily search populated fields natively in basic mongoose without aggregation,
+    // so if they need search by business name, we could do a pre-query or aggregation.
+    // For now, basic pagination.
+
+    const [payments, total] = await Promise.all([
+      ManualPayment.find(filter)
+        .populate("businessId", "name email phone")
+        .populate("agentId", "name email")
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(Number(limit))
+        .lean(),
+      ManualPayment.countDocuments(filter)
+    ]);
+
+    return successResponse({
+      res,
+      data: { payments },
+      meta: {
+        pagination: {
+          page: Number(page),
+          limit: Number(limit),
+          total,
+          totalPages: Math.ceil(total / Number(limit))
+        }
+      }
+    });
   } catch (error) {
     next(error);
   }
@@ -60,7 +83,7 @@ export async function verifyManualPayment(req, res, next) {
   try {
     return await withTransaction(async (session) => {
       const { paymentId } = req.params;
-      
+
       const payment = await ManualPayment.findById(paymentId).session(session);
       if (!payment) return errorResponse({ res, statusCode: 404, message: "Payment not found" });
 
@@ -87,7 +110,7 @@ export async function verifyManualPayment(req, res, next) {
         const profile = await AgentProfile.findOne({ userId: payment.agentId }).session(session);
         if (profile) {
           const commission = (payment.amount * (profile.commissionPercentage || 0)) / 100;
-          
+
           payment.commissionCalculated = true;
           payment.commissionAmount = commission;
 
@@ -99,7 +122,7 @@ export async function verifyManualPayment(req, res, next) {
           }
           wallet.pending += commission;
           profile.totalSales += payment.amount;
-          
+
           await profile.save({ session });
         }
       }
@@ -131,6 +154,40 @@ export async function verifyManualPayment(req, res, next) {
 
       return successResponse({ res, message: "Payment verified successfully" });
     });
+  } catch (error) {
+    next(error);
+  }
+}
+
+// Admin: Resend manual payment invoice
+export async function resendManualPaymentInvoice(req, res, next) {
+  try {
+    const { paymentId } = req.params;
+    
+    const payment = await ManualPayment.findById(paymentId);
+    if (!payment) return errorResponse({ res, statusCode: 404, message: "Payment not found" });
+
+    if (payment.status !== "verified") {
+       return errorResponse({ res, statusCode: 400, message: "Only verified payments can have invoices resent" });
+    }
+
+    const business = await Business.findById(payment.businessId).populate("ownerId");
+    if (!business || !business.ownerId?.email) {
+      return errorResponse({ res, statusCode: 400, message: "Business or owner email not found" });
+    }
+
+    // Await it so we can give immediate feedback if it fails
+    await mailer.sendManualPaymentInvoice(
+      business.ownerId.email,
+      business.name,
+      payment.amount,
+      payment.currency,
+      payment.screenshotUrl || "N/A",
+      "Custom Plan",
+      business.currentPeriodEnd
+    );
+
+    return successResponse({ res, message: "Invoice resent successfully" });
   } catch (error) {
     next(error);
   }

@@ -52,10 +52,20 @@ async function buildAuthUserResponse(user, subscriptionOverrides = {}) {
 
   if (user.businessId && user.role !== "superadmin") {
     const biz = await Business.findById(user.businessId)
-      .select("subscriptionStatus trialEndsAt planId planType businessProfile enabledFeatures currency")
+      .select("subscriptionStatus trialEndsAt currentPeriodEnd gracePeriodEndsAt planId planType businessProfile enabledFeatures currency")
       .lean();
     if (biz) {
-      if (subscriptionStatus === null) subscriptionStatus = biz.subscriptionStatus;
+      if (subscriptionStatus === null) {
+        subscriptionStatus = biz.subscriptionStatus;
+        const now = new Date();
+        if (subscriptionStatus === "trial" && biz.trialEndsAt && now > new Date(biz.trialEndsAt)) {
+          subscriptionStatus = "payment_locked";
+        } else if (subscriptionStatus === "active" && biz.currentPeriodEnd && now > new Date(biz.currentPeriodEnd)) {
+          subscriptionStatus = "payment_locked";
+        } else if (subscriptionStatus === "grace_period" && biz.gracePeriodEndsAt && now > new Date(biz.gracePeriodEndsAt)) {
+          subscriptionStatus = "payment_locked";
+        }
+      }
       if (trialEndsAt === null) trialEndsAt = biz.trialEndsAt;
       let plan = null;
       if (biz.planId) {
