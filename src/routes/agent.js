@@ -5,7 +5,10 @@ import {
   getAgentStats,
   getAgentClients,
   createClient,
-  updateCustomPlan
+  updateCustomPlan,
+  requestPayout,
+  getPlanRequestHistory,
+  getAgentWalletHistory
 } from "../controllers/agentController.js";
 
 const router = Router();
@@ -26,8 +29,11 @@ router.use((req, res, next) => {
 });
 
 router.get("/stats", getAgentStats);
+router.get("/wallet/history", getAgentWalletHistory);
 router.get("/clients", getAgentClients);
 router.post("/clients", createClient);
 router.put("/clients/:businessId/custom-plan", updateCustomPlan);
+router.get("/clients/:businessId/plan-history", getPlanRequestHistory);
+router.post("/payout-requests", requestPayout);
 
 export default router;

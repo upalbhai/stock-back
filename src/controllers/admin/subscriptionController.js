@@ -4,6 +4,8 @@ import { Business } from "../../models/Business.js";
 import { Plan } from "../../models/Plan.js";
 import { Subscription } from "../../models/Subscription.js";
 import { AuditLog } from "../../models/AuditLog.js";
+import { AgentProfile } from "../../models/AgentProfile.js";
+import { AgentTransaction } from "../../models/AgentTransaction.js";
 import { applyPlanToBusiness } from "../../utils/syncBusinessPlan.js";
 import mailer from "../../utils/mailer.js";
 import { getSubscriptionConfirmationTemplate } from "../../utils/emailTemplates.js";
@@ -133,6 +135,31 @@ async function adminCreateManualSubscription(req, res, next) {
       message: `Manually created subscription for ${plan.name} (${billingCycle}). Notes: ${notes || "None"}`,
       ip: req.ip
     });
+
+    if (business.agentId) {
+      const profile = await AgentProfile.findOne({ userId: business.agentId });
+      if (profile) {
+        const commission = (finalAmount * (profile.commissionPercentage || 0)) / 100;
+        let wallet = profile.wallets.find(w => w.currency === finalCurrency);
+        if (!wallet) {
+          profile.wallets.push({ currency: finalCurrency, totalSales: 0, pending: 0, paid: 0 });
+          wallet = profile.wallets[profile.wallets.length - 1];
+        }
+        wallet.pending += commission;
+        wallet.totalSales += finalAmount;
+        profile.totalSales += finalAmount;
+        await profile.save();
+        
+        await AgentTransaction.create({
+          agentId: business.agentId,
+          type: "commission",
+          amount: commission,
+          currency: finalCurrency,
+          referenceId: subscription._id.toString(),
+          description: `Commission earned from manual subscription ${plan.name} (${billingCycle}) for business ${business.name}`
+        });
+      }
+    }
 
     // Removed automatic email sending so admin can view and send manually
 

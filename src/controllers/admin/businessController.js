@@ -327,6 +327,20 @@ async function rejectPlanRequest(req, res, next) {
   }
 }
 
+async function getAdminPlanRequestHistory(req, res, next) {
+  try {
+    const { AuditLog } = await import("../../models/AuditLog.js");
+    const logs = await AuditLog.find({
+      businessId: req.params.id,
+      action: { $in: ["agent_plan_change_requested", "admin_plan_change_approved", "admin_plan_change_rejected"] }
+    }).sort({ createdAt: -1 }).lean();
+
+    return successResponse({ res, data: { logs } });
+  } catch (error) {
+    return next(error);
+  }
+}
+
 export {
   adminListBusinesses,
   adminToggleBusiness,
@@ -335,5 +349,6 @@ export {
   adminSetBusinessStatus,
   getPendingPlanRequests,
   approvePlanRequest,
-  rejectPlanRequest
+  rejectPlanRequest,
+  getAdminPlanRequestHistory
 };

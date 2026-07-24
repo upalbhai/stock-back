@@ -205,7 +205,7 @@ async function getSubscriptionStatus(req, res, next) {
       message: "Business not found"
     });
     
-    const business = await Business.findById(businessId).select("subscriptionStatus trialEndsAt currentPeriodEnd planId maxOutlets maxStaff maxProducts customPlanDetails").populate("planId").lean();
+    const business = await Business.findById(businessId).select("subscriptionStatus trialEndsAt currentPeriodEnd planId maxOutlets maxStaff maxProducts customPlanDetails pendingCustomPlan").populate("planId").lean();
     if (!business) return errorResponse({
       res: res,
       statusCode: 404,
@@ -223,7 +223,8 @@ async function getSubscriptionStatus(req, res, next) {
         maxOutlets: business.maxOutlets,
         maxStaff: business.maxStaff,
         maxProducts: business.maxProducts,
-        customPlanDetails: business.customPlanDetails
+        customPlanDetails: business.customPlanDetails,
+        pendingCustomPlan: business.pendingCustomPlan
       }
     });
   } catch (error) {

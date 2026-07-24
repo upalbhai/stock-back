@@ -58,11 +58,15 @@ export async function getAgentStats(req, res, next) {
 
     const clientsCount = await Business.countDocuments({ agentId });
 
+    const { PayoutRequest } = await import("../models/PayoutRequest.js");
+    const pendingRequests = await PayoutRequest.find({ agentId, status: "pending" }).lean();
+
     return successResponse({
       res,
       data: {
         totalSales: profile.totalSales,
         wallets: profile.wallets,
+        pendingRequests,
         commissionPercentage: profile.commissionPercentage,
         activeClients: clientsCount,
         agentCode: profile.agentCode
@@ -263,8 +267,16 @@ export async function requestPayout(req, res, next) {
       return errorResponse({ res, statusCode: 400, message: `No wallet found for currency ${currency}` });
     }
 
-    if (wallet.pending < amount) {
-      return errorResponse({ res, statusCode: 400, message: `Insufficient pending balance in ${currency}. Available: ${wallet.pending}` });
+    const existingRequests = await PayoutRequest.aggregate([
+      { $match: { agentId, currency, status: "pending" } },
+      { $group: { _id: null, total: { $sum: "$amount" } } }
+    ]);
+    const pendingRequestedAmount = existingRequests[0]?.total || 0;
+
+    const availableToRequest = wallet.pending - pendingRequestedAmount;
+
+    if (availableToRequest < amount) {
+      return errorResponse({ res, statusCode: 400, message: `Insufficient pending balance. Available to request: ${availableToRequest}` });
     }
 
     // Create the payout request
@@ -275,6 +287,55 @@ export async function requestPayout(req, res, next) {
     });
 
     return successResponse({ res, statusCode: 201, message: "Payout request submitted successfully", data: request });
+  } catch (error) {
+    next(error);
+  }
+}
+
+// 7. Get Plan Request History
+export async function getPlanRequestHistory(req, res, next) {
+  try {
+    const { businessId } = req.params;
+    const agentId = req.user.userId;
+
+    // Verify the agent owns this business
+    const { Business } = await import("../models/Business.js");
+    const business = await Business.findOne({ _id: businessId, agentId });
+    if (!business) {
+      return errorResponse({ res, statusCode: 404, message: "Client not found or you don't have permission" });
+    }
+
+    const { AuditLog } = await import("../models/AuditLog.js");
+    const logs = await AuditLog.find({
+      businessId,
+      action: { $in: ["agent_plan_change_requested", "admin_approved_plan", "admin_rejected_plan"] }
+    }).sort({ createdAt: -1 }).lean();
+
+    return successResponse({ res, data: { logs } });
+  } catch (error) {
+    next(error);
+  }
+}
+
+// 8. Get Wallet History
+export async function getAgentWalletHistory(req, res, next) {
+  try {
+    const agentId = req.user.userId;
+    const { currency } = req.query;
+
+    const query = { agentId };
+    if (currency) {
+      query.currency = currency;
+    }
+
+    const { AgentTransaction } = await import("../models/AgentTransaction.js");
+    
+    const transactions = await AgentTransaction.find(query)
+      .sort({ createdAt: -1 })
+      .limit(100) // limit to recent 100 for now
+      .lean();
+
+    return successResponse({ res, data: { transactions } });
   } catch (error) {
     next(error);
   }

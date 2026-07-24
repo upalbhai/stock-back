@@ -7,7 +7,8 @@ import {
   adminSetBusinessStatus,
   getPendingPlanRequests,
   approvePlanRequest,
-  rejectPlanRequest
+  rejectPlanRequest,
+  getAdminPlanRequestHistory
 } from "../controllers/admin/businessController.js";
 import {
   adminApproveOutlet,
@@ -38,7 +39,10 @@ import {
 import {
   getAgents,
   approveAgent,
-  createAgent
+  createAgent,
+  getPayoutRequests,
+  processPayoutRequest,
+  getAgentPerformanceStats
 } from "../controllers/admin/adminAgentController.js";
 import {
   verifyManualPayment,
@@ -80,6 +84,7 @@ adminRouter.patch("/businesses/:id/plan", rateLimit("admin"), validate(adminPlan
 adminRouter.get("/businesses/pending-plans", rateLimit("admin"), getPendingPlanRequests);
 adminRouter.post("/businesses/:id/approve-plan", rateLimit("admin"), validate(idParamSchema, "params"), approvePlanRequest);
 adminRouter.post("/businesses/:id/reject-plan", rateLimit("admin"), validate(idParamSchema, "params"), rejectPlanRequest);
+adminRouter.get("/businesses/:id/plan-history", rateLimit("admin"), validate(idParamSchema, "params"), getAdminPlanRequestHistory);
 
 adminRouter.patch("/outlets/:id/approve", rateLimit("admin"), validate(idParamSchema, "params"), adminApproveOutlet);
 adminRouter.patch("/outlets/:id/status", rateLimit("admin"), validate(adminStatusSchema), adminSetOutletStatus);
@@ -105,7 +110,12 @@ adminRouter.put("/settings", rateLimit("admin"), updateSettings);
 
 // Agents Management
 adminRouter.get("/agents", rateLimit("admin"), getAgents);
+adminRouter.get("/agents/performance", rateLimit("admin"), getAgentPerformanceStats);
 adminRouter.post("/agents", rateLimit("admin"), createAgent);
 adminRouter.put("/agents/:agentId/approve", rateLimit("admin"), approveAgent);
+
+// Agent Payout Requests
+adminRouter.get("/payout-requests", rateLimit("admin"), getPayoutRequests);
+adminRouter.post("/payout-requests/:id/process", rateLimit("admin"), processPayoutRequest);
 
 export { adminRouter };

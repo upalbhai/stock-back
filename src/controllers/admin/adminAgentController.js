@@ -127,3 +127,144 @@ export async function createAgent(req, res, next) {
     next(error);
   }
 }
+
+export async function getPayoutRequests(req, res, next) {
+  try {
+    const { PayoutRequest } = await import("../../models/PayoutRequest.js");
+    const requests = await PayoutRequest.find()
+      .populate("agentId", "name email")
+      .populate("processedBy", "name")
+      .sort({ createdAt: -1 })
+      .lean();
+
+    return successResponse({ res, data: { requests } });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function processPayoutRequest(req, res, next) {
+  try {
+    const { id } = req.params;
+    const { action, transactionId, notes } = req.body; // action: 'approve' or 'reject'
+
+    if (!["approve", "reject"].includes(action)) {
+      return errorResponse({ res, statusCode: 400, message: "Invalid action" });
+    }
+
+    const { PayoutRequest } = await import("../../models/PayoutRequest.js");
+    const { AgentProfile } = await import("../../models/AgentProfile.js");
+    const { AgentTransaction } = await import("../../models/AgentTransaction.js");
+    
+    const request = await PayoutRequest.findById(id);
+    if (!request) {
+      return errorResponse({ res, statusCode: 404, message: "Payout request not found" });
+    }
+    
+    if (request.status !== "pending") {
+      return errorResponse({ res, statusCode: 400, message: `Request is already ${request.status}` });
+    }
+
+    const profile = await AgentProfile.findOne({ userId: request.agentId });
+    if (!profile) {
+      return errorResponse({ res, statusCode: 404, message: "Agent profile not found" });
+    }
+
+    const wallet = profile.wallets.find(w => w.currency === request.currency);
+    if (!wallet) {
+      return errorResponse({ res, statusCode: 400, message: "Wallet not found" });
+    }
+
+    if (action === "approve") {
+      if (wallet.pending < request.amount) {
+        return errorResponse({ res, statusCode: 400, message: "Agent has insufficient pending balance for this approval." });
+      }
+      wallet.pending -= request.amount;
+      wallet.paid += request.amount;
+      request.status = "approved";
+      request.transactionId = transactionId;
+    } else {
+      request.status = "rejected";
+    }
+
+    request.notes = notes;
+    request.processedAt = new Date();
+    request.processedBy = req.user.userId;
+
+    await profile.save();
+    await request.save();
+
+    if (action === "approve") {
+      await AgentTransaction.create({
+        agentId: request.agentId,
+        type: "payout",
+        amount: request.amount,
+        currency: request.currency,
+        referenceId: request._id.toString(),
+        description: `Payout processed by admin. Transaction ID: ${transactionId || "N/A"}`
+      });
+    }
+
+    const { AuditLog } = await import("../../models/AuditLog.js");
+    await AuditLog.create({
+      actorId: req.user.userId,
+      module: "admin",
+      action: `payout_request_${action}`,
+      targetType: "PayoutRequest",
+      targetId: request._id,
+      message: `${action === "approve" ? "Approved" : "Rejected"} payout of ${request.amount} ${request.currency}`,
+      ip: req.ip
+    });
+
+    return successResponse({ res, message: `Payout request ${action}d successfully`, data: request });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function getAgentPerformanceStats(req, res, next) {
+  try {
+    const { Business } = await import("../../models/Business.js");
+    const { AgentTransaction } = await import("../../models/AgentTransaction.js");
+
+    const agents = await User.find({ role: "agent" }).select("name email status").lean();
+    const profiles = await AgentProfile.find().lean();
+    const clientsCount = await Business.aggregate([
+      { $match: { agentId: { $exists: true } } },
+      { $group: { _id: "$agentId", count: { $sum: 1 } } }
+    ]);
+
+    const transactions = await AgentTransaction.aggregate([
+      {
+        $group: {
+          _id: { agentId: "$agentId", type: "$type", currency: "$currency" },
+          total: { $sum: "$amount" }
+        }
+      }
+    ]);
+
+    const stats = agents.map(agent => {
+      const profile = profiles.find(p => p.userId.toString() === agent._id.toString());
+      const clients = clientsCount.find(c => c._id?.toString() === agent._id.toString())?.count || 0;
+      
+      const earnings = transactions.filter(t => t._id.agentId?.toString() === agent._id.toString() && t._id.type === "commission");
+      const payouts = transactions.filter(t => t._id.agentId?.toString() === agent._id.toString() && t._id.type === "payout");
+
+      return {
+        _id: agent._id,
+        name: agent.name,
+        email: agent.email,
+        status: agent.status,
+        wallets: profile?.wallets || [],
+        clientsCount: clients,
+        totalSales: profile?.totalSales || 0,
+        earnings,
+        payouts
+      };
+    });
+
+    return successResponse({ res, data: { stats } });
+  } catch (error) {
+    next(error);
+  }
+}

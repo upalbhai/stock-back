@@ -4,6 +4,8 @@ import { Business } from "../models/Business.js";
 import { ManualPayment } from "../models/ManualPayment.js";
 import { AgentProfile } from "../models/AgentProfile.js";
 import { AuditLog } from "../models/AuditLog.js";
+import { Subscription } from "../models/Subscription.js";
+import { AgentTransaction } from "../models/AgentTransaction.js";
 import { withTransaction } from "../utils/transaction.js";
 import mailer from "../utils/mailer.js";
 
@@ -103,6 +105,20 @@ export async function verifyManualPayment(req, res, next) {
         business.currentPeriodEnd = endDate;
         business.currentPeriodStart = new Date();
         await business.save({ session });
+
+        await Subscription.create([{
+          businessId: business._id,
+          planId: business.planId || business._id, // fallback if planId is missing
+          billingCycle: "monthly",
+          status: "active",
+          razorpayPaymentId: payment._id.toString(),
+          razorpayOrderId: "MANUAL_PAYMENT",
+          razorpaySignature: "MANUAL_PAYMENT",
+          amount: payment.amount,
+          currency: payment.currency,
+          startDate: business.currentPeriodStart,
+          endDate: business.currentPeriodEnd
+        }], { session });
       }
 
       // Calculate agent commission
@@ -126,6 +142,15 @@ export async function verifyManualPayment(req, res, next) {
           profile.totalSales += payment.amount;
 
           await profile.save({ session });
+          
+          await AgentTransaction.create([{
+            agentId: payment.agentId,
+            type: "commission",
+            amount: commission,
+            currency: payment.currency,
+            referenceId: payment._id.toString(),
+            description: `Commission earned from manual payment verification for business ${business?.name || payment.businessId}`
+          }], { session });
         }
       }
 
