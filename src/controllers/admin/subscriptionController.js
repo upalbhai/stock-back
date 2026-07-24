@@ -149,7 +149,7 @@ async function adminCreateManualSubscription(req, res, next) {
         wallet.totalSales += finalAmount;
         profile.totalSales += finalAmount;
         await profile.save();
-        
+
         await AgentTransaction.create({
           agentId: business.agentId,
           type: "commission",
