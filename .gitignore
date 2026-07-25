@@ -4,3 +4,5 @@ dist
 .env.local
 seed/
 mongo_dump/
+# Seeders
+src/seeders/

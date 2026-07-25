@@ -52,7 +52,7 @@ function mergeInventoryAndProduct(inventory) {
 async function listProducts(req, res, next) {
   try {
     const { businessId } = req.user;
-    const { outletId, categoryId, search, scan, includeInactive, page = 1, limit = 50, cursor } = req.query;
+    const { outletId, categoryId, brandId, search, scan, includeInactive, page = 1, limit = 50, cursor } = req.query;
     const numLimit = Number(limit);
 
     // 1. Build inventory filter (fast indexed query)
@@ -111,7 +111,7 @@ async function listProducts(req, res, next) {
       ];
       const matchedProducts = await Product.find(productMatch).select("_id").lean();
       filteredProductIds = new Set(matchedProducts.map(p => p._id.toString()));
-    } else if (categoryIds.length > 0) {
+    } else if (categoryIds.length > 0 || brandId) {
       const matchedProducts = await Product.find(productMatch).select("_id").lean();
       filteredProductIds = new Set(matchedProducts.map(p => p._id.toString()));
     }
@@ -146,8 +146,8 @@ async function listProducts(req, res, next) {
 
       // Fetch products with populates
       const products = await Product.find({ _id: { $in: productIds } })
-        .populate({ path: "categoryId", select: "name icon color parentId" })
-        .populate({ path: "unitId", select: "name abbreviation key" })
+        .populate({ path: "categoryId", select: "name icon color parentId" }).populate({ path: "brandId", select: "name logo slug" })
+        .populate({ path: "brandId", select: "name logo slug" })`r`n      .populate({ path: "unitId", select: "name abbreviation key" })
         .populate({ path: "packagingUnits.unitId", select: "name abbreviation key" })
         .lean();
 
@@ -186,8 +186,8 @@ async function listProducts(req, res, next) {
 
       // Fetch products with populates
       const products = await Product.find({ _id: { $in: productIds } })
-        .populate({ path: "categoryId", select: "name icon color parentId" })
-        .populate({ path: "unitId", select: "name abbreviation key" })
+        .populate({ path: "categoryId", select: "name icon color parentId" }).populate({ path: "brandId", select: "name logo slug" })
+        .populate({ path: "brandId", select: "name logo slug" })`r`n      .populate({ path: "unitId", select: "name abbreviation key" })
         .populate({ path: "packagingUnits.unitId", select: "name abbreviation key" })
         .lean();
 
@@ -223,7 +223,7 @@ async function getProduct(req, res, next) {
       .populate({
         path: "productId",
         populate: [
-          { path: "categoryId", select: "name icon color parentId" },
+          { path: "categoryId", select: "name icon color parentId" },{ path: "brandId", select: "name logo slug" },
           { path: "unitId", select: "name abbreviation key" },
           { path: "packagingUnits.unitId", select: "name abbreviation key" }
         ]
@@ -251,7 +251,7 @@ async function createProduct(req, res, next) {
 
       const { businessId } = req.user;
       const {
-        outletId, categoryId, name, description, sku, barcode, unit, unitId, price, costPrice, taxRate, gstRate, hsnCode, packagingUnits, onHandQty, lowStockThreshold, isFeatured, image, tags, sortOrder
+        outletId, categoryId, brandId, name, description, sku, barcode, unit, unitId, price, costPrice, taxRate, gstRate, hsnCode, packagingUnits, onHandQty, lowStockThreshold, isFeatured, image, tags, sortOrder
       } = req.body;
 
       if (unitId) {
@@ -274,7 +274,7 @@ async function createProduct(req, res, next) {
       }
 
       const product = await new Product({
-        businessId, categoryId, name, description, sku, barcode, unitId: unitId || undefined, unit: unit || "pcs", price, costPrice: costPrice || 0, taxRate: taxRate || 0, gstRate: gstRate || 0, hsnCode: hsnCode || undefined, packagingUnits: validatedPackaging, isFeatured: isFeatured || false, image, tags: tags || [], sortOrder: sortOrder || 0
+        businessId, categoryId, brandId, name, description, sku, barcode, unitId: unitId || undefined, unit: unit || "pcs", price, costPrice: costPrice || 0, taxRate: taxRate || 0, gstRate: gstRate || 0, hsnCode: hsnCode || undefined, packagingUnits: validatedPackaging, isFeatured: isFeatured || false, image, tags: tags || [], sortOrder: sortOrder || 0
       }).save({ session });
       
       const inventory = await new Inventory({
@@ -306,7 +306,7 @@ async function updateProduct(req, res, next) {
   try {
     const { businessId } = req.user;
     const { outletId } = req.query; // If provided, update inventory specifics too
-    const allowed = ["name", "description", "categoryId", "sku", "barcode", "unit", "unitId", "price", "costPrice", "taxRate", "gstRate", "hsnCode", "packagingUnits", "isFeatured", "image", "tags", "sortOrder", "isActive"];
+    const allowed = ["name", "description", "categoryId", "brandId", "sku", "barcode", "unit", "unitId", "price", "costPrice", "taxRate", "gstRate", "hsnCode", "packagingUnits", "isFeatured", "image", "tags", "sortOrder", "isActive"];
     const update = {};
     for (const key of allowed) {
       if (req.body[key] !== void 0) update[key] = req.body[key];
@@ -335,7 +335,7 @@ async function updateProduct(req, res, next) {
       { $set: update },
       { new: true }
     )
-      .populate({ path: "unitId", select: "name abbreviation key" })
+      .populate({ path: "brandId", select: "name logo slug" })`r`n      .populate({ path: "unitId", select: "name abbreviation key" })
       .populate({ path: "packagingUnits.unitId", select: "name abbreviation key" })
       .lean();
       
@@ -385,7 +385,7 @@ async function deleteProduct(req, res, next) {
 async function getGlobalProducts(req, res, next) {
   try {
     const { businessId } = req.user;
-    const { outletId, search, page = 1, limit = 50 } = req.query;
+        const { outletId, search, categoryId, brandId, page = 1, limit = 50 } = req.query;
 
     const numLimit = Number(limit);
     const numPage = Number(page);
@@ -394,6 +394,13 @@ async function getGlobalProducts(req, res, next) {
       businessId: new mongoose.Types.ObjectId(businessId), 
       isActive: true 
     };
+
+    if (categoryId) {
+      productMatch.categoryId = new mongoose.Types.ObjectId(categoryId);
+    }
+    if (brandId) {
+      productMatch.brandId = new mongoose.Types.ObjectId(brandId);
+    }
 
     if (search) {
       productMatch.$or = [
@@ -408,7 +415,7 @@ async function getGlobalProducts(req, res, next) {
       const [total, products] = await Promise.all([
         Product.countDocuments(productMatch),
         Product.find(productMatch)
-          .populate({ path: "categoryId", select: "name icon color parentId" })
+          .populate({ path: "categoryId", select: "name icon color parentId" }).populate({ path: "brandId", select: "name logo slug" })
           .skip((numPage - 1) * numLimit)
           .limit(numLimit)
           .lean()
@@ -446,6 +453,16 @@ async function getGlobalProducts(req, res, next) {
           data: [
             { $skip: (numPage - 1) * numLimit },
             { $limit: numLimit },
+            {
+              $lookup: {
+                from: "brands",
+                localField: "brandId",
+                foreignField: "_id",
+                pipeline: [{ $project: { name: 1, logo: 1, slug: 1 } }],
+                as: "brandId"
+              }
+            },
+            { $unwind: { path: "$brandId", preserveNullAndEmptyArrays: true } },
             {
               $lookup: {
                 from: "categories",
@@ -596,3 +613,4 @@ export {
   importProduct,
   importProductsBulk
 };
+

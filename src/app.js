@@ -8,6 +8,7 @@ import agentRouter from "./routes/agent.js";
 import { businessRouter } from "./routes/businesses.js";
 import { outletRouter } from "./routes/outlets.js";
 import { categoryRouter } from "./routes/categories.js";
+import { brandRouter } from "./routes/brands.js";
 import { unitRouter } from "./routes/units.js";
 import { productRouter } from "./routes/products.js";
 import { stockRouter } from "./routes/stock.js";
@@ -69,6 +70,7 @@ function createApp() {
   app.use("/api/businesses", ...withSub, businessRouter);
   app.use("/api/outlets", ...withSub, outletRouter);
   app.use("/api/categories", ...withSub, categoryRouter);
+  app.use("/api/brands", ...withSub, brandRouter);
   app.use("/api/units", ...withSub, unitRouter);
   app.use("/api/products", ...withSub, productRouter);
   app.use("/api/stock", ...withSub, stockRouter);
