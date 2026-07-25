@@ -79,7 +79,13 @@ async function updateUnit(req, res, next) {
 async function deleteUnit(req, res, next) {
   try {
     const { businessId } = req.user;
-    await Unit.findOneAndUpdate({ _id: req.params.id, businessId }, { $set: { isActive: false } });
+    const unit = await Unit.findOne({ _id: req.params.id, businessId });
+    if (!unit) return errorResponse({ res, statusCode: 404, message: "Unit not found" });
+    
+    unit.isActive = false;
+    unit.key = `${unit.key}-deleted-${Date.now()}`;
+    await unit.save();
+
     return successResponse({ res, message: "Unit deactivated" });
   } catch (error) {
     return next(error);
