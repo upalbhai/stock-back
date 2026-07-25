@@ -146,8 +146,9 @@ async function listProducts(req, res, next) {
 
       // Fetch products with populates
       const products = await Product.find({ _id: { $in: productIds } })
-        .populate({ path: "categoryId", select: "name icon color parentId" }).populate({ path: "brandId", select: "name logo slug" })
-        .populate({ path: "brandId", select: "name logo slug" })`r`n      .populate({ path: "unitId", select: "name abbreviation key" })
+        .populate({ path: "categoryId", select: "name icon color parentId" })
+        .populate({ path: "brandId", select: "name logo slug" })
+        .populate({ path: "unitId", select: "name abbreviation key" })
         .populate({ path: "packagingUnits.unitId", select: "name abbreviation key" })
         .lean();
 
@@ -186,8 +187,9 @@ async function listProducts(req, res, next) {
 
       // Fetch products with populates
       const products = await Product.find({ _id: { $in: productIds } })
-        .populate({ path: "categoryId", select: "name icon color parentId" }).populate({ path: "brandId", select: "name logo slug" })
-        .populate({ path: "brandId", select: "name logo slug" })`r`n      .populate({ path: "unitId", select: "name abbreviation key" })
+        .populate({ path: "categoryId", select: "name icon color parentId" })
+        .populate({ path: "brandId", select: "name logo slug" })
+        .populate({ path: "unitId", select: "name abbreviation key" })
         .populate({ path: "packagingUnits.unitId", select: "name abbreviation key" })
         .lean();
 
@@ -335,7 +337,8 @@ async function updateProduct(req, res, next) {
       { $set: update },
       { new: true }
     )
-      .populate({ path: "brandId", select: "name logo slug" })`r`n      .populate({ path: "unitId", select: "name abbreviation key" })
+      .populate({ path: "brandId", select: "name logo slug" })
+      .populate({ path: "unitId", select: "name abbreviation key" })
       .populate({ path: "packagingUnits.unitId", select: "name abbreviation key" })
       .lean();
       

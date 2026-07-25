@@ -1,5 +1,6 @@
 import express from "express";
-import { protect, requirePermission } from "../middlewares/auth.js";
+import { requireAuth } from "../middlewares/auth.js";
+import { requirePermission } from "../middlewares/permission.js";
 import {
   listBrands,
   getBrand,
@@ -10,7 +11,7 @@ import {
 
 const router = express.Router();
 
-router.use(protect);
+router.use(requireAuth);
 
 router.get("/", listBrands);
 router.get("/:id", getBrand);
