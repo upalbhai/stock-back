@@ -14,7 +14,9 @@ const manualPaymentSchema = new Schema(
     },
     commissionCalculated: { type: Boolean, default: false },
     commissionAmount: { type: Number, default: 0 },
-    verifiedBy: { type: Schema.Types.ObjectId, ref: "User" }
+    verifiedBy: { type: Schema.Types.ObjectId, ref: "User" },
+    rejectionReason: { type: String },
+    notes: { type: String }
   },
   { timestamps: true }
 );

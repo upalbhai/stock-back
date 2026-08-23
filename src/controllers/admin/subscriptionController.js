@@ -62,13 +62,21 @@ async function adminListSubscriptions(req, res, next) {
 
 async function adminCreateManualSubscription(req, res, next) {
   try {
-    const { businessId, planId, billingCycle = "monthly", amount, currency, paymentReference, endDate, notes } = req.body;
+    const { businessId, planId, billingCycle = "monthly", amount, currency, paymentReference, endDate, notes, isCustomPlan } = req.body;
 
-    if (!businessId || !planId) {
+    if (!businessId) {
       return errorResponse({
         res,
         statusCode: 400,
-        message: "businessId and planId are required"
+        message: "businessId is required"
+      });
+    }
+
+    if (!isCustomPlan && !planId) {
+      return errorResponse({
+        res,
+        statusCode: 400,
+        message: "planId is required for standard plans"
       });
     }
 
@@ -81,13 +89,20 @@ async function adminCreateManualSubscription(req, res, next) {
       });
     }
 
-    const plan = await Plan.findById(planId);
-    if (!plan) {
-      return errorResponse({
-        res,
-        statusCode: 404,
-        message: "Plan not found"
-      });
+    let plan = null;
+    let planName = "Custom Plan";
+    
+    if (!isCustomPlan) {
+      plan = await Plan.findById(planId);
+      if (!plan) {
+        return errorResponse({ res, statusCode: 404, message: "Plan not found" });
+      }
+      planName = plan.name;
+    } else {
+      if (!business.customPlanDetails) {
+        return errorResponse({ res, statusCode: 400, message: "Custom plan details not found for this business" });
+      }
+      planName = `Custom ${business.planType || 'Plan'}`;
     }
 
     const startDate = new Date();
@@ -103,13 +118,26 @@ async function adminCreateManualSubscription(req, res, next) {
       }
     }
 
-    const finalAmount = amount !== undefined ? Number(amount) : (billingCycle === "yearly" ? plan.yearlyPrice : plan.monthlyPrice);
-    const finalCurrency = currency || business.currency || "INR";
+    let finalAmount = 0;
+    if (amount !== undefined) {
+      finalAmount = Number(amount);
+    } else if (isCustomPlan) {
+      finalAmount = business.customPlanDetails?.price || 0;
+    } else {
+      finalAmount = billingCycle === "yearly" ? plan.yearlyPrice : plan.monthlyPrice;
+    }
+
+    let finalCurrency = currency || "INR";
+    if (!currency && isCustomPlan && business.customPlanDetails?.currency) {
+      finalCurrency = business.customPlanDetails.currency;
+    } else if (!currency && business.currency) {
+      finalCurrency = business.currency;
+    }
 
     // Create Subscription record
     const subscription = await Subscription.create({
       businessId,
-      planId,
+      planId: plan ? plan._id : business._id, // fallback
       billingCycle,
       status: "active",
       razorpayPaymentId: paymentReference || `MANUAL_${Date.now()}`,
@@ -121,18 +149,25 @@ async function adminCreateManualSubscription(req, res, next) {
       endDate: calculatedEndDate
     });
 
-    await applyPlanToBusiness(businessId, plan, {
-      subscriptionStatus: "active",
-      currentPeriodStart: startDate,
-      currentPeriodEnd: calculatedEndDate
-    });
+    if (plan) {
+      await applyPlanToBusiness(businessId, plan, {
+        subscriptionStatus: "active",
+        currentPeriodStart: startDate,
+        currentPeriodEnd: calculatedEndDate
+      });
+    } else {
+      business.subscriptionStatus = "active";
+      business.currentPeriodStart = startDate;
+      business.currentPeriodEnd = calculatedEndDate;
+      await business.save();
+    }
 
     await AuditLog.create({
       businessId,
       actorId: req.user?.userId,
       module: "admin",
       action: "manual_subscription_create",
-      message: `Manually created subscription for ${plan.name} (${billingCycle}). Notes: ${notes || "None"}`,
+      message: `Manually created subscription for ${planName} (${billingCycle}). Notes: ${notes || "None"}`,
       ip: req.ip
     });
 
@@ -156,7 +191,7 @@ async function adminCreateManualSubscription(req, res, next) {
           amount: commission,
           currency: finalCurrency,
           referenceId: subscription._id.toString(),
-          description: `Commission earned from manual subscription ${plan.name} (${billingCycle}) for business ${business.name}`
+          description: `Commission earned from manual subscription ${planName} (${billingCycle}) for business ${business.name}`
         });
       }
     }

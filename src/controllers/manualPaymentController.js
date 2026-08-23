@@ -219,3 +219,45 @@ export async function resendManualPaymentInvoice(req, res, next) {
     next(error);
   }
 }
+
+// Admin: Reject manual payment
+export async function rejectManualPayment(req, res, next) {
+  try {
+    const { paymentId } = req.params;
+    const { rejectionReason, notes } = req.body;
+    
+    if (!rejectionReason) {
+      return errorResponse({ res, statusCode: 400, message: "Rejection reason is required" });
+    }
+
+    const payment = await ManualPayment.findById(paymentId);
+    if (!payment) return errorResponse({ res, statusCode: 404, message: "Payment not found" });
+
+    if (payment.status !== "pending_verification") {
+       return errorResponse({ res, statusCode: 400, message: "Only pending payments can be rejected" });
+    }
+
+    payment.status = "rejected";
+    payment.rejectionReason = rejectionReason;
+    if (notes) payment.notes = notes;
+    payment.verifiedBy = req.user.userId;
+
+    await payment.save();
+
+    await AuditLog.create({
+      businessId: payment.businessId,
+      actorId: req.user.userId,
+      module: "billing",
+      action: "manual_payment_rejected",
+      message: `Rejected manual payment of ${payment.amount} ${payment.currency}. Reason: ${rejectionReason}`,
+      ip: req.ip
+    });
+
+    // We can also send an email notifying the owner of rejection.
+    // For now, they'll see it on the frontend or it gets ignored.
+
+    return successResponse({ res, message: "Payment rejected successfully", data: payment });
+  } catch (error) {
+    next(error);
+  }
+}

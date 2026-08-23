@@ -66,7 +66,7 @@ async function adminToggleBusiness(req, res, next) {
 
 async function adminUpdatePlan(req, res, next) {
   try {
-    const { planId, maxOutlets, subscriptionStatus, currentPeriodEnd } = req.body;
+    const { planId, maxOutlets, subscriptionStatus, currentPeriodEnd, isCustomPlan, customPlanDetails } = req.body;
 
     const business = await Business.findById(req.params.id);
     if (!business) return errorResponse({
@@ -76,8 +76,64 @@ async function adminUpdatePlan(req, res, next) {
     });
 
     let updatedBusiness = business;
+    let message = `Admin manually updated plan/subscription for ${business.name}`;
 
-    if (planId) {
+    if (isCustomPlan && customPlanDetails) {
+      const { price, currency, maxProducts, maxOutlets: customMaxOutlets, enabledFeatures } = customPlanDetails;
+      
+      const customOutlets = customMaxOutlets || business.maxOutlets || 1;
+      const customProducts = maxProducts || business.maxProducts || 50;
+      const customFeatures = enabledFeatures || business.enabledFeatures || [];
+      
+      let planType = "retail";
+      if (customFeatures.includes("retail_billing") && customFeatures.includes("wholesale_billing")) {
+        planType = "hybrid";
+      } else if (customFeatures.includes("wholesale_billing")) {
+        planType = "wholesale";
+      }
+
+      updatedBusiness = await Business.findByIdAndUpdate(
+        business._id,
+        {
+          $set: {
+            customPlanDetails: {
+              price: price || 0,
+              currency: currency || business.currency || "INR",
+              maxProducts: customProducts,
+              maxOutlets: customOutlets,
+              enabledFeatures: customFeatures
+            },
+            maxProducts: customProducts,
+            maxOutlets: customOutlets,
+            enabledFeatures: customFeatures,
+            planType,
+            businessProfile: planType,
+            planId: null, // Clear standard plan id
+            ...(subscriptionStatus !== undefined ? { subscriptionStatus } : {}),
+            ...(currentPeriodEnd !== undefined ? { currentPeriodEnd: new Date(currentPeriodEnd) } : {}),
+            lastPlanRequestStatus: {
+              status: "approved",
+              reason: "Configured directly by admin",
+              date: new Date()
+            }
+          },
+          $unset: {
+            pendingCustomPlan: 1
+          }
+        },
+        { new: true }
+      );
+      
+      message = `Admin applied custom dynamic plan for ${business.name}`;
+      
+      try {
+        const { getIO } = await import("../../config/socket.js");
+        getIO().to(`business:${business._id.toString()}`).emit("subscriptionUpdated");
+      } catch (err) {
+        console.error("Socket emit failed", err);
+      }
+      
+    } else if (planId) {
       const plan = await Plan.findById(planId);
       if (!plan) return errorResponse({
         res: res,
@@ -91,6 +147,14 @@ async function adminUpdatePlan(req, res, next) {
       if (maxOutlets !== undefined) extraFields.maxOutlets = maxOutlets;
 
       updatedBusiness = await applyPlanToBusiness(business._id, plan, extraFields);
+      
+      try {
+        const { getIO } = await import("../../config/socket.js");
+        getIO().to(`business:${business._id.toString()}`).emit("subscriptionUpdated");
+      } catch (err) {
+        console.error("Socket emit failed", err);
+      }
+      
     } else {
       const updateFields = {};
       if (maxOutlets !== undefined) updateFields.maxOutlets = maxOutlets;
@@ -113,7 +177,7 @@ async function adminUpdatePlan(req, res, next) {
       targetType: "Business",
       targetId: updatedBusiness._id,
       targetName: updatedBusiness.name,
-      message: `Admin manually updated plan/subscription for ${updatedBusiness.name}`,
+      message,
       ip: req.ip
     });
 

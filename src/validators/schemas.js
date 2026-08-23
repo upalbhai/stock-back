@@ -147,8 +147,16 @@ export const adminPlanSchema = z.object({
   planId: z.string().optional(),
   planExpiresAt: z.string().datetime().optional().or(z.date().optional()),
   maxOutlets: z.number().int().min(1).optional(),
-  subscriptionStatus: z.enum(["trial", "active", "expired", "cancelled"]).optional(),
+  subscriptionStatus: z.enum(["trial", "active", "expired", "cancelled", "past_due", "unpaid"]).optional(),
   currentPeriodEnd: z.string().datetime().optional().or(z.date().optional()),
+  isCustomPlan: z.boolean().optional(),
+  customPlanDetails: z.object({
+    price: z.number().min(0).optional(),
+    currency: z.string().optional(),
+    maxProducts: z.number().min(0).optional(),
+    maxOutlets: z.number().min(1).optional(),
+    enabledFeatures: z.array(z.string()).optional()
+  }).optional()
 });
 
 export const adminImpersonateSchema = z.object({

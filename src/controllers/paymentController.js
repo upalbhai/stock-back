@@ -23,7 +23,7 @@ function getRazorpayInstance() {
 // 1. Create Order
 async function createOrder(req, res, next) {
   try {
-    const { planId, billingCycle = "monthly" } = req.body;
+    const { planId, billingCycle = "monthly", isCustomPlan } = req.body;
     const businessId = req.user?.businessId;
     
     if (!businessId) return errorResponse({
@@ -32,16 +32,33 @@ async function createOrder(req, res, next) {
       message: "Business not found"
     });
     
-    const plan = await Plan.findById(planId);
-    if (!plan || !plan.isActive) {
-      return errorResponse({
-        res: res,
-        statusCode: 404,
-        message: "Plan not found or inactive"
-      });
-    }
+    let amount = 0;
+    let currency = "INR";
     
-    const amount = billingCycle === "yearly" ? plan.yearlyPrice : plan.monthlyPrice;
+    if (isCustomPlan) {
+      const business = await Business.findById(businessId);
+      if (!business || !business.customPlanDetails) {
+        return errorResponse({
+          res: res,
+          statusCode: 400,
+          message: "Custom plan details not found for this business"
+        });
+      }
+      amount = business.customPlanDetails.price || 0;
+      currency = business.customPlanDetails.currency || "INR";
+    } else {
+      const plan = await Plan.findById(planId);
+      if (!plan || !plan.isActive) {
+        return errorResponse({
+          res: res,
+          statusCode: 404,
+          message: "Plan not found or inactive"
+        });
+      }
+      
+      amount = billingCycle === "yearly" ? plan.yearlyPrice : plan.monthlyPrice;
+    }
+
     if (amount <= 0) {
       return errorResponse({
         res: res,
@@ -54,7 +71,7 @@ async function createOrder(req, res, next) {
     
     const options = {
       amount: amount * 100, // amount in the smallest currency unit (paise for INR)
-      currency: "INR",
+      currency: currency,
       receipt: `receipt_${businessId}_${Date.now()}`
     };
     
@@ -78,7 +95,7 @@ async function createOrder(req, res, next) {
 // 2. Verify Payment
 async function verifyPayment(req, res, next) {
   try {
-    const { razorpay_order_id, razorpay_payment_id, razorpay_signature, planId, billingCycle = "monthly" } = req.body;
+    const { razorpay_order_id, razorpay_payment_id, razorpay_signature, planId, billingCycle = "monthly", isCustomPlan } = req.body;
     const businessId = req.user?.businessId;
     
     if (!businessId) return errorResponse({
@@ -101,14 +118,33 @@ async function verifyPayment(req, res, next) {
       });
     }
 
-    const plan = await Plan.findById(planId);
-    if (!plan) return errorResponse({
-      res: res,
-      statusCode: 404,
-      message: "Plan not found"
-    });
+    let amount = 0;
+    let planName = "Custom Plan";
+    let planDoc = null;
+    let currency = "INR";
+    const business = await Business.findById(businessId).populate("ownerId", "email name");
     
-    const amount = billingCycle === "yearly" ? plan.yearlyPrice : plan.monthlyPrice;
+    if (isCustomPlan) {
+      if (!business || !business.customPlanDetails) {
+        return errorResponse({
+          res: res,
+          statusCode: 400,
+          message: "Custom plan details not found for this business"
+        });
+      }
+      amount = business.customPlanDetails.price || 0;
+      currency = business.customPlanDetails.currency || "INR";
+      planName = `Custom ${business.planType || 'Plan'}`;
+    } else {
+      planDoc = await Plan.findById(planId);
+      if (!planDoc) return errorResponse({
+        res: res,
+        statusCode: 404,
+        message: "Plan not found"
+      });
+      amount = billingCycle === "yearly" ? planDoc.yearlyPrice : planDoc.monthlyPrice;
+      planName = planDoc.name;
+    }
     
     const startDate = new Date();
     const endDate = new Date();
@@ -121,38 +157,45 @@ async function verifyPayment(req, res, next) {
     // Create Subscription record
     const subscription = await Subscription.create({
       businessId,
-      planId,
+      planId: planDoc ? planDoc._id : business._id, // fallback for custom plans
       billingCycle,
       status: "active",
       razorpayPaymentId: razorpay_payment_id,
       razorpayOrderId: razorpay_order_id,
       razorpaySignature: razorpay_signature,
       amount,
+      currency,
       startDate,
       endDate
     });
     
     // Update Business
-    await applyPlanToBusiness(businessId, plan, {
-      subscriptionStatus: "active",
-      currentPeriodStart: startDate,
-      currentPeriodEnd: endDate
-    });
-    const business = await Business.findById(businessId).populate("ownerId", "email name");
+    if (planDoc) {
+      await applyPlanToBusiness(businessId, planDoc, {
+        subscriptionStatus: "active",
+        currentPeriodStart: startDate,
+        currentPeriodEnd: endDate
+      });
+    } else {
+      business.subscriptionStatus = "active";
+      business.currentPeriodStart = startDate;
+      business.currentPeriodEnd = endDate;
+      await business.save();
+    }
     
     await AuditLog.create({
       businessId,
       actorId: req.user?.userId,
       module: "billing",
       action: "subscription_payment",
-      message: `Purchased ${plan.name} (${billingCycle})`,
+      message: `Purchased ${planName} (${billingCycle})`,
       ip: req.ip
     });
     
     // Send confirmation email
     if (business.ownerId?.email) {
       try {
-        await mailer.sendSubscriptionConfirmation(business.ownerId.email, plan.name, amount, "INR", endDate);
+        await mailer.sendSubscriptionConfirmation(business.ownerId.email, planName, amount, currency, endDate);
       } catch (e) {
         console.warn("Failed to send subscription confirmation email", e.message);
       }
@@ -232,12 +275,67 @@ async function getSubscriptionStatus(req, res, next) {
   }
 }
 
+// 6. Get Payment History
+async function getPaymentHistory(req, res, next) {
+  try {
+    const businessId = req.user?.businessId;
+    if (!businessId) {
+      return errorResponse({ res, statusCode: 403, message: "Business not found" });
+    }
+
+    const subscriptions = await Subscription.find({ businessId })
+      .populate("planId", "name")
+      .lean();
+      
+    const manualPayments = await ManualPayment.find({ businessId })
+      .lean();
+
+    // Map and merge
+    const history = [
+      ...subscriptions.map(sub => ({
+        id: sub._id.toString(),
+        type: "subscription",
+        amount: sub.amount,
+        currency: sub.currency || "INR",
+        status: sub.status,
+        date: sub.createdAt,
+        reference: sub.razorpayPaymentId || sub.razorpayOrderId,
+        description: sub.planId ? sub.planId.name : "Custom Plan",
+        periodStart: sub.startDate,
+        periodEnd: sub.endDate,
+      })),
+      ...manualPayments.map(mp => ({
+        id: mp._id.toString(),
+        type: "manual",
+        amount: mp.amount,
+        currency: mp.currency || "INR",
+        status: mp.status,
+        date: mp.createdAt,
+        reference: mp.screenshotUrl,
+        description: "Manual Bank Transfer",
+        rejectionReason: mp.rejectionReason,
+      }))
+    ];
+
+    // Sort by date descending
+    history.sort((a, b) => new Date(b.date) - new Date(a.date));
+
+    return successResponse({
+      res,
+      data: { history }
+    });
+  } catch (error) {
+    return next(error);
+  }
+}
+
 export {
   createOrder,
   verifyPayment,
   webhookHandler,
   getSubscriptionStatus,
-  requestGracePeriod
+  requestGracePeriod,
+  getPaymentHistory
 };
 
 // 5. Request Grace Period
