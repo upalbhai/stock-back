@@ -155,7 +155,8 @@ export const adminPlanSchema = z.object({
     currency: z.string().optional(),
     maxProducts: z.number().min(0).optional(),
     maxOutlets: z.number().min(1).optional(),
-    enabledFeatures: z.array(z.string()).optional()
+    enabledFeatures: z.array(z.string()).optional(),
+    billingCycle: z.enum(["monthly", "yearly"]).optional()
   }).optional()
 });
 

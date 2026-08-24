@@ -9,6 +9,8 @@ import { Subscription } from "../models/Subscription.js";
 import { AuditLog } from "../models/AuditLog.js";
 import { applyPlanToBusiness } from "../utils/syncBusinessPlan.js";
 import mailer from "../utils/mailer.js";
+import { ManualPayment } from "../models/ManualPayment.js";
+import { resolveUtr } from "../utils/manualPaymentProof.js";
 
 function getRazorpayInstance() {
   if (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET) {
@@ -255,6 +257,11 @@ async function getSubscriptionStatus(req, res, next) {
       message: "Business not found"
     });
     
+    const [pendingManualPayment, lastRejectedManualPayment] = await Promise.all([
+      ManualPayment.findOne({ businessId, status: "pending_verification" }).sort({ createdAt: -1 }).lean(),
+      ManualPayment.findOne({ businessId, status: "rejected" }).sort({ createdAt: -1 }).lean()
+    ]);
+
     return successResponse({
       res: res,
 
@@ -267,7 +274,27 @@ async function getSubscriptionStatus(req, res, next) {
         maxStaff: business.maxStaff,
         maxProducts: business.maxProducts,
         customPlanDetails: business.customPlanDetails,
-        pendingCustomPlan: business.pendingCustomPlan
+        pendingCustomPlan: business.pendingCustomPlan,
+        pendingManualPayment: pendingManualPayment
+          ? {
+              id: pendingManualPayment._id,
+              utr: resolveUtr(pendingManualPayment),
+              amount: pendingManualPayment.amount,
+              currency: pendingManualPayment.currency,
+              createdAt: pendingManualPayment.createdAt,
+              status: pendingManualPayment.status
+            }
+          : null,
+        lastRejectedManualPayment: lastRejectedManualPayment && !pendingManualPayment
+          ? {
+              id: lastRejectedManualPayment._id,
+              utr: resolveUtr(lastRejectedManualPayment),
+              amount: lastRejectedManualPayment.amount,
+              currency: lastRejectedManualPayment.currency,
+              rejectionReason: lastRejectedManualPayment.rejectionReason,
+              createdAt: lastRejectedManualPayment.createdAt
+            }
+          : null
       }
     });
   } catch (error) {
@@ -283,16 +310,17 @@ async function getPaymentHistory(req, res, next) {
       return errorResponse({ res, statusCode: 403, message: "Business not found" });
     }
 
-    const subscriptions = await Subscription.find({ businessId })
-      .populate("planId", "name")
-      .lean();
-      
-    const manualPayments = await ManualPayment.find({ businessId })
-      .lean();
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 10));
+    const skip = (page - 1) * limit;
 
-    // Map and merge
+    const [subscriptions, manualPayments] = await Promise.all([
+      Subscription.find({ businessId }).populate("planId", "name").lean(),
+      ManualPayment.find({ businessId }).lean()
+    ]);
+
     const history = [
-      ...subscriptions.map(sub => ({
+      ...subscriptions.map((sub) => ({
         id: sub._id.toString(),
         type: "subscription",
         amount: sub.amount,
@@ -302,27 +330,37 @@ async function getPaymentHistory(req, res, next) {
         reference: sub.razorpayPaymentId || sub.razorpayOrderId,
         description: sub.planId ? sub.planId.name : "Custom Plan",
         periodStart: sub.startDate,
-        periodEnd: sub.endDate,
+        periodEnd: sub.endDate
       })),
-      ...manualPayments.map(mp => ({
+      ...manualPayments.map((mp) => ({
         id: mp._id.toString(),
         type: "manual",
         amount: mp.amount,
         currency: mp.currency || "INR",
         status: mp.status,
         date: mp.createdAt,
-        reference: mp.screenshotUrl,
+        reference: resolveUtr(mp) || mp.screenshotUrl,
         description: "Manual Bank Transfer",
-        rejectionReason: mp.rejectionReason,
+        rejectionReason: mp.rejectionReason
       }))
     ];
 
-    // Sort by date descending
     history.sort((a, b) => new Date(b.date) - new Date(a.date));
+
+    const total = history.length;
+    const paginatedHistory = history.slice(skip, skip + limit);
 
     return successResponse({
       res,
-      data: { history }
+      data: { history: paginatedHistory },
+      meta: {
+        pagination: {
+          page,
+          limit,
+          total,
+          totalPages: Math.max(1, Math.ceil(total / limit))
+        }
+      }
     });
   } catch (error) {
     return next(error);

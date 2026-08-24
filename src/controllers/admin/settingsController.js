@@ -18,7 +18,7 @@ async function getSettings(req, res, next) {
 
 async function updateSettings(req, res, next) {
   try {
-    const { maintenanceMode, defaultTrialDays, allowNewSignups, globalAnnouncement } = req.body;
+    const { maintenanceMode, defaultTrialDays, allowNewSignups, globalAnnouncement, bankDetails } = req.body;
     let settings = await SystemSetting.findOne();
     if (!settings) {
       settings = new SystemSetting();
@@ -28,6 +28,12 @@ async function updateSettings(req, res, next) {
     if (defaultTrialDays !== undefined) settings.defaultTrialDays = defaultTrialDays;
     if (allowNewSignups !== undefined) settings.allowNewSignups = allowNewSignups;
     if (globalAnnouncement !== undefined) settings.globalAnnouncement = globalAnnouncement;
+    if (bankDetails && typeof bankDetails === "object") {
+      settings.bankDetails = {
+        ...(settings.bankDetails?.toObject?.() || settings.bankDetails || {}),
+        ...bankDetails
+      };
+    }
     
     await settings.save();
     clearMaintenanceCache();

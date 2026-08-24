@@ -8,33 +8,124 @@ import { Subscription } from "../models/Subscription.js";
 import { AgentTransaction } from "../models/AgentTransaction.js";
 import { withTransaction } from "../utils/transaction.js";
 import mailer from "../utils/mailer.js";
+import { emitToBusiness } from "../utils/socketEmitter.js";
+import { notify } from "../utils/notificationService.js";
+import {
+  normalizeUtr,
+  resolveUtr,
+  hasScreenshotFile,
+  addBillingPeriod,
+  saveManualPaymentScreenshot,
+  screenshotAbsolutePath
+} from "../utils/manualPaymentProof.js";
+import fs from "fs/promises";
 
-// Owner: Upload a screenshot for manual payment
+function publicBankDetails(settings) {
+  const bank = settings?.bankDetails || {};
+  return {
+    accountName: bank.accountName || "",
+    accountNumber: bank.accountNumber || "",
+    ifsc: bank.ifsc || "",
+    bankName: bank.bankName || "",
+    branch: bank.branch || "",
+    upiId: bank.upiId || "",
+    notes: bank.notes || ""
+  };
+}
+
+export async function getBankDetails(req, res, next) {
+  try {
+    const { SystemSetting } = await import("../models/SystemSetting.js");
+    const settings = await SystemSetting.findOne().lean();
+    return successResponse({ res, data: { bankDetails: publicBankDetails(settings) } });
+  } catch (error) {
+    next(error);
+  }
+}
+
+// Owner: Submit UTR + optional screenshot for bank transfer
 export async function uploadManualPayment(req, res, next) {
   try {
-    const { amount, currency, screenshotUrl } = req.body;
+    const { utr, screenshotBase64, notes } = req.body;
     const businessId = req.user?.businessId;
 
     if (!businessId) {
       return errorResponse({ res, statusCode: 403, message: "Business not found" });
     }
 
+    const normalizedUtr = normalizeUtr(utr);
+    if (!normalizedUtr || normalizedUtr.length < 6) {
+      return errorResponse({ res, statusCode: 400, message: "Enter a valid UTR / UPI reference (at least 6 characters)" });
+    }
+
     const business = await Business.findById(businessId).lean();
     if (!business) {
       return errorResponse({ res, statusCode: 404, message: "Business not found" });
     }
+    if (!business.customPlanDetails) {
+      return errorResponse({ res, statusCode: 400, message: "No custom plan is assigned yet. Wait for admin to quote your plan." });
+    }
+
+    const quotedAmount = Number(business.customPlanDetails.price || 0);
+    if (quotedAmount <= 0) {
+      return errorResponse({ res, statusCode: 400, message: "Custom plan price is not set. Contact support." });
+    }
+
+    const pending = await ManualPayment.findOne({
+      businessId,
+      status: "pending_verification"
+    }).lean();
+    if (pending) {
+      return errorResponse({
+        res,
+        statusCode: 409,
+        message: "You already have a bank transfer waiting for verification. Please wait or contact support."
+      });
+    }
+
+    const duplicateUtr = await ManualPayment.findOne({
+      utr: normalizedUtr,
+      status: { $in: ["pending_verification", "verified"] }
+    }).lean();
+    if (duplicateUtr) {
+      return errorResponse({ res, statusCode: 409, message: "This UTR / reference is already submitted." });
+    }
+
+    let screenshotPath = null;
+    let screenshotMime = null;
+    if (screenshotBase64) {
+      const saved = await saveManualPaymentScreenshot(businessId, screenshotBase64);
+      screenshotPath = saved.screenshotPath;
+      screenshotMime = saved.mimeType;
+    }
+
+    const billingCycle = business.customPlanDetails.billingCycle === "yearly" ? "yearly" : "monthly";
+    const currency = business.customPlanDetails.currency || "INR";
 
     const manualPayment = await ManualPayment.create({
       businessId,
       agentId: business.agentId,
-      amount,
-      currency: currency || business.customPlanDetails?.currency || "INR",
-      screenshotUrl,
+      amount: quotedAmount,
+      currency,
+      utr: normalizedUtr,
+      screenshotUrl: screenshotPath ? `FILE:${screenshotPath}` : `UTR:${normalizedUtr}`,
+      screenshotPath,
+      screenshotMime,
+      billingCycle,
+      notes: notes ? String(notes).slice(0, 500) : undefined,
       status: "pending_verification"
     });
 
-    return successResponse({ res, statusCode: 201, message: "Payment screenshot uploaded for verification", data: { paymentId: manualPayment._id } });
+    return successResponse({
+      res,
+      statusCode: 201,
+      message: "Payment submitted. We will verify it and activate your plan, usually within 24 hours.",
+      data: { paymentId: manualPayment._id }
+    });
   } catch (error) {
+    if (error.status === 400) {
+      return errorResponse({ res, statusCode: 400, message: error.message });
+    }
     next(error);
   }
 }
@@ -52,7 +143,7 @@ export async function getManualPayments(req, res, next) {
     // so if they need search by business name, we could do a pre-query or aggregation.
     // For now, basic pagination.
 
-    const [payments, total] = await Promise.all([
+    const [docs, total] = await Promise.all([
       ManualPayment.find(filter)
         .populate("businessId", "name email phone")
         .populate("agentId", "name email")
@@ -62,6 +153,12 @@ export async function getManualPayments(req, res, next) {
         .lean(),
       ManualPayment.countDocuments(filter)
     ]);
+
+    const payments = docs.map((p) => ({
+      ...p,
+      utr: resolveUtr(p),
+      hasScreenshot: hasScreenshotFile(p) || Boolean(p.screenshotPath)
+    }));
 
     return successResponse({
       res,
@@ -99,9 +196,11 @@ export async function verifyManualPayment(req, res, next) {
       const business = await Business.findById(payment.businessId).populate("ownerId").session(session);
       if (business) {
         business.subscriptionStatus = "active";
-        // Typical manual plan might give 1 month or 1 year. We'll add 1 month for now.
-        const endDate = new Date(business.currentPeriodEnd && business.currentPeriodEnd > new Date() ? business.currentPeriodEnd : new Date());
-        endDate.setMonth(endDate.getMonth() + 1);
+        const cycle = payment.billingCycle || business.customPlanDetails?.billingCycle || "monthly";
+        const baseDate = business.currentPeriodEnd && business.currentPeriodEnd > new Date()
+          ? business.currentPeriodEnd
+          : new Date();
+        const endDate = addBillingPeriod(baseDate, cycle);
         business.currentPeriodEnd = endDate;
         business.currentPeriodStart = new Date();
         await business.save({ session });
@@ -109,7 +208,7 @@ export async function verifyManualPayment(req, res, next) {
         await Subscription.create([{
           businessId: business._id,
           planId: business.planId || business._id, // fallback if planId is missing
-          billingCycle: "monthly",
+          billingCycle: cycle,
           status: "active",
           razorpayPaymentId: payment._id.toString(),
           razorpayOrderId: "MANUAL_PAYMENT",
@@ -173,10 +272,26 @@ export async function verifyManualPayment(req, res, next) {
           business.name,
           payment.amount,
           payment.currency,
-          payment.screenshotUrl || "N/A",
+          resolveUtr(payment) || payment._id.toString(),
           "Custom Plan",
           business.currentPeriodEnd
         ).catch(err => console.error("Failed to send invoice:", err.message));
+      }
+
+      const ownerId = business?.ownerId?._id || business?.ownerId;
+      emitToBusiness(payment.businessId.toString(), "subscriptionUpdated", {
+        subscriptionStatus: "active",
+        currentPeriodEnd: business?.currentPeriodEnd
+      });
+      if (ownerId) {
+        notify({
+          businessId: payment.businessId,
+          recipientId: ownerId,
+          type: "system",
+          title: "Payment verified",
+          body: "Your bank transfer was verified and your subscription is now active.",
+          link: "/dashboard/subscribe"
+        });
       }
 
       return successResponse({ res, message: "Payment verified successfully" });
@@ -209,7 +324,7 @@ export async function resendManualPaymentInvoice(req, res, next) {
       business.name,
       payment.amount,
       payment.currency,
-      payment.screenshotUrl || "N/A",
+      resolveUtr(payment) || payment._id.toString(),
       "Custom Plan",
       business.currentPeriodEnd
     );
@@ -253,10 +368,52 @@ export async function rejectManualPayment(req, res, next) {
       ip: req.ip
     });
 
-    // We can also send an email notifying the owner of rejection.
-    // For now, they'll see it on the frontend or it gets ignored.
+    const business = await Business.findById(payment.businessId).populate("ownerId", "email name");
+    const ownerId = business?.ownerId?._id || business?.ownerId;
+    if (business?.ownerId?.email) {
+      mailer.sendManualPaymentRejected(
+        business.ownerId.email,
+        business.name,
+        payment.amount,
+        payment.currency,
+        resolveUtr(payment),
+        rejectionReason
+      ).catch((err) => console.error("Failed to send rejection email:", err.message));
+    }
+    emitToBusiness(payment.businessId.toString(), "subscriptionUpdated", { manualPaymentStatus: "rejected" });
+    if (ownerId) {
+      notify({
+        businessId: payment.businessId,
+        recipientId: ownerId,
+        type: "system",
+        title: "Bank transfer rejected",
+        body: rejectionReason,
+        link: "/dashboard/subscribe"
+      });
+    }
 
     return successResponse({ res, message: "Payment rejected successfully", data: payment });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function getManualPaymentProof(req, res, next) {
+  try {
+    const payment = await ManualPayment.findById(req.params.paymentId).lean();
+    if (!payment) return errorResponse({ res, statusCode: 404, message: "Payment not found" });
+    if (!payment.screenshotPath) {
+      return errorResponse({ res, statusCode: 404, message: "No screenshot uploaded for this payment" });
+    }
+    const abs = screenshotAbsolutePath(payment.screenshotPath);
+    try {
+      await fs.access(abs);
+    } catch {
+      return errorResponse({ res, statusCode: 404, message: "Screenshot file is missing" });
+    }
+    res.setHeader("Content-Type", payment.screenshotMime || "image/jpeg");
+    res.setHeader("Content-Disposition", "inline");
+    return res.sendFile(abs);
   } catch (error) {
     next(error);
   }

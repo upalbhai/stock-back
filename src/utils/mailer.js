@@ -13,7 +13,8 @@ import {
   getSubscriptionConfirmationTemplate,
   getNewDeviceLoginTemplate,
   getAgentWelcomeLinkTemplate,
-  getManualPaymentInvoiceTemplate
+  getManualPaymentInvoiceTemplate,
+  getManualPaymentRejectedTemplate
 } from "./emailTemplates.js";
 
 const BREVO_API = "https://api.brevo.com/v3/smtp/email";
@@ -146,6 +147,12 @@ export async function sendManualPaymentInvoice(email, businessName, amount, curr
   return sendEmail({ to: email, subject, html });
 }
 
+export async function sendManualPaymentRejected(email, businessName, amount, currency, transactionId, reason) {
+  if (!email) return;
+  const { subject, html } = getManualPaymentRejectedTemplate(businessName, amount, currency, transactionId, reason);
+  return sendEmail({ to: email, subject, html });
+}
+
 export default {
   sendEmail,
   sendOtpEmail,
@@ -161,5 +168,6 @@ export default {
   sendSubscriptionConfirmation,
   sendNewDeviceLoginEmail,
   sendAgentWelcomeLink,
-  sendManualPaymentInvoice
+  sendManualPaymentInvoice,
+  sendManualPaymentRejected
 };

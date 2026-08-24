@@ -48,7 +48,8 @@ import {
   verifyManualPayment,
   getManualPayments,
   resendManualPaymentInvoice,
-  rejectManualPayment
+  rejectManualPayment,
+  getManualPaymentProof
 } from "../controllers/manualPaymentController.js";
 import { requireAuth, requireSuperAdmin } from "../middlewares/auth.js";
 import { validate } from "../middlewares/validate.js";
@@ -99,6 +100,7 @@ adminRouter.get("/businesses/:id/preview-email", rateLimit("admin"), validate(id
 adminRouter.post("/businesses/:id/send-email", rateLimit("admin"), validate(idParamSchema, "params"), adminSendSubscriptionEmail);
 
 adminRouter.get("/payments/manual", rateLimit("admin"), getManualPayments);
+adminRouter.get("/payments/manual/:paymentId/proof", rateLimit("admin"), getManualPaymentProof);
 adminRouter.put("/payments/manual/:paymentId/verify", rateLimit("admin"), verifyManualPayment);
 adminRouter.put("/payments/manual/:paymentId/reject", rateLimit("admin"), rejectManualPayment);
 adminRouter.post("/payments/manual/:paymentId/resend-invoice", rateLimit("admin"), resendManualPaymentInvoice);

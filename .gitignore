@@ -2,6 +2,7 @@ node_modules
 dist
 .env
 .env.local
+uploads/
 seed/
 mongo_dump/
 # Seeders

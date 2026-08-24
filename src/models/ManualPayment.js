@@ -6,7 +6,12 @@ const manualPaymentSchema = new Schema(
     agentId: { type: Schema.Types.ObjectId, ref: "User" }, // optional, for tracking
     amount: { type: Number, required: true },
     currency: { type: String, default: "INR" },
+    utr: { type: String, trim: true, uppercase: true },
     screenshotUrl: { type: String, required: true },
+    screenshotPath: { type: String },
+    screenshotMime: { type: String },
+    billingCycle: { type: String, enum: ["monthly", "yearly"], default: "monthly" },
+    notes: { type: String, trim: true },
     status: {
       type: String,
       enum: ["pending_verification", "verified", "rejected"],
@@ -15,14 +20,14 @@ const manualPaymentSchema = new Schema(
     commissionCalculated: { type: Boolean, default: false },
     commissionAmount: { type: Number, default: 0 },
     verifiedBy: { type: Schema.Types.ObjectId, ref: "User" },
-    rejectionReason: { type: String },
-    notes: { type: String }
+    rejectionReason: { type: String }
   },
   { timestamps: true }
 );
 
-manualPaymentSchema.index({ businessId: 1 });
+manualPaymentSchema.index({ businessId: 1, status: 1 });
 manualPaymentSchema.index({ agentId: 1 });
+manualPaymentSchema.index({ utr: 1 });
 
 const ManualPayment = mongoose.models.ManualPayment || mongoose.model("ManualPayment", manualPaymentSchema);
 export { ManualPayment };

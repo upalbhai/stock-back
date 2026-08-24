@@ -53,6 +53,7 @@ const businessSchema = new Schema(
     customPlanDetails: {
       price: { type: Number },
       currency: { type: String, default: "INR" },
+      billingCycle: { type: String, enum: ["monthly", "yearly"], default: "monthly" },
       maxProducts: { type: Number },
       maxOutlets: { type: Number },
       enabledFeatures: { type: [String] }

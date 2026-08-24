@@ -250,3 +250,21 @@ export const getManualPaymentInvoiceTemplate = (businessName, amount, currency, 
     )
   };
 };
+
+export const getManualPaymentRejectedTemplate = (businessName, amount, currency, transactionId, reason) => {
+  const displayCurrency = currency || "INR";
+  return {
+    subject: `Bank transfer could not be verified - ${businessName}`,
+    html: wrapHtml(
+      "Bank transfer not verified",
+      `<p style="margin-top: 0;">Dear ${businessName},</p>
+       <p>We could not verify your recent bank transfer. Your subscription has not been activated.</p>
+       <table style="width: 100%; border-collapse: collapse; margin: 24px 0; background: #F5F5F7; border-radius: 8px; overflow: hidden; border: 1px solid #D9D9E0;">
+         <tr><td style="padding: 12px 16px; color: #6C6C70; font-size: 14px; border-bottom: 1px solid #D9D9E0;">Reference / UTR</td><td style="padding: 12px 16px; font-weight: 600; text-align: right; border-bottom: 1px solid #D9D9E0;">${transactionId || "N/A"}</td></tr>
+         <tr><td style="padding: 12px 16px; color: #6C6C70; font-size: 14px; border-bottom: 1px solid #D9D9E0;">Amount</td><td style="padding: 12px 16px; font-weight: 600; text-align: right; border-bottom: 1px solid #D9D9E0;">${displayCurrency} ${amount}</td></tr>
+         <tr><td style="padding: 12px 16px; color: #6C6C70; font-size: 14px;">Reason</td><td style="padding: 12px 16px; font-weight: 600; text-align: right;">${reason || "Not specified"}</td></tr>
+       </table>
+       <p style="margin-bottom: 0;">Please submit a new transfer with the correct UTR, or pay online from the subscription page. Contact support if you think this is a mistake.</p>`
+    )
+  };
+};

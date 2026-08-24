@@ -22,6 +22,9 @@ RUN addgroup --system --gid 1001 appgroup && \
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
+# Writable dir for manual payment proof uploads (mounted as a volume in production)
+RUN mkdir -p uploads/manual-payments
+
 # Ensure proper ownership
 RUN chown -R appuser:appgroup /app
 

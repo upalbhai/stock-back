@@ -79,11 +79,12 @@ async function adminUpdatePlan(req, res, next) {
     let message = `Admin manually updated plan/subscription for ${business.name}`;
 
     if (isCustomPlan && customPlanDetails) {
-      const { price, currency, maxProducts, maxOutlets: customMaxOutlets, enabledFeatures } = customPlanDetails;
+      const { price, currency, maxProducts, maxOutlets: customMaxOutlets, enabledFeatures, billingCycle } = customPlanDetails;
       
       const customOutlets = customMaxOutlets || business.maxOutlets || 1;
       const customProducts = maxProducts || business.maxProducts || 50;
       const customFeatures = enabledFeatures || business.enabledFeatures || [];
+      const customBillingCycle = billingCycle === "yearly" ? "yearly" : "monthly";
       
       let planType = "retail";
       if (customFeatures.includes("retail_billing") && customFeatures.includes("wholesale_billing")) {
@@ -99,6 +100,7 @@ async function adminUpdatePlan(req, res, next) {
             customPlanDetails: {
               price: price || 0,
               currency: currency || business.currency || "INR",
+              billingCycle: customBillingCycle,
               maxProducts: customProducts,
               maxOutlets: customOutlets,
               enabledFeatures: customFeatures
@@ -312,11 +314,12 @@ async function approvePlanRequest(req, res, next) {
       return errorResponse({ res, statusCode: 404, message: "No pending plan request found" });
     }
 
-    const { price, currency, maxProducts, maxOutlets, enabledFeatures } = business.pendingCustomPlan;
+    const { price, currency, maxProducts, maxOutlets, enabledFeatures, billingCycle } = business.pendingCustomPlan;
 
     business.customPlanDetails = {
       price,
       currency,
+      billingCycle: billingCycle === "yearly" ? "yearly" : "monthly",
       maxProducts,
       maxOutlets,
       enabledFeatures
