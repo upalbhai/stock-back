@@ -2,8 +2,11 @@ import express from "express";
 import cors from "cors";
 import helmet from "helmet";
 import morgan from "morgan";
+import path from "path";
+import { fileURLToPath } from "url";
 import { corsOrigins, env } from "./config/env.js";
 import { authRouter } from "./routes/auth.js";
+import blogRouter from "./routes/blogs.js";
 import agentRouter from "./routes/agent.js";
 import { businessRouter } from "./routes/businesses.js";
 import { outletRouter } from "./routes/outlets.js";
@@ -37,7 +40,9 @@ function isAllowedOrigin(origin) {
 }
 function createApp() {
   const app = express();
-  app.use(helmet());
+  app.use(helmet({
+    crossOriginResourcePolicy: { policy: "cross-origin" }
+  }));
   app.use(
     cors({
       origin(origin, callback) {
@@ -51,18 +56,25 @@ function createApp() {
   );
   app.use(express.json({ limit: "2mb" }));
   app.use(morgan("dev"));
+
+  const __filename = fileURLToPath(import.meta.url);
+  const __dirname = path.dirname(__filename);
+  app.use("/uploads", express.static(path.join(__dirname, "../uploads")));
+
   app.get("/api/health", (_req, res) => {
     res.json({
       status: "ok",
       timestamp: /* @__PURE__ */ new Date().toISOString(),
     });
   });
+
   app.use("/api/auth", authRouter);
   app.use("/api/agent", agentRouter);
   app.use("/api/admin", adminRouter);
   app.use("/api/plans", planRouter);
   app.use("/api/payments", paymentRouter);
   app.use("/api/features", featureRouter);
+  app.use("/api/blogs", blogRouter);
 
   const withSub = [requireAuth, requireActiveSubscription, loadBusinessContext];
 

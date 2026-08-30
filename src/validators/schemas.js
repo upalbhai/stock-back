@@ -352,3 +352,26 @@ export const planCreateSchema = z.object({
 }).passthrough();
 
 export const planUpdateSchema = planCreateSchema.partial().passthrough();
+
+// Blog schemas (admin & public)
+export const blogCreateSchema = z.object({
+  title: z.string().trim().min(1, "Title is required").max(120),
+  slug: z.string().trim().min(1).max(120).regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "Slug must be lowercase alphanumeric with hyphens"),
+  excerpt: z.string().trim().max(500).optional(),
+  content: z.string().optional(),
+  coverImage: z.string().trim().optional(),
+  status: z.enum(["draft", "published", "archived"]).optional(),
+  seoTitle: z.string().trim().max(100).optional(),
+  seoDescription: z.string().trim().max(200).optional(),
+  canonicalUrl: z.string().trim().url().optional().or(z.literal("")),
+  ogImage: z.string().trim().optional(),
+  tags: z.array(z.string().trim()).optional(),
+  noindex: z.boolean().optional(),
+  authorId: z.string().trim().optional()
+}).passthrough();
+
+export const blogUpdateSchema = blogCreateSchema.partial().passthrough();
+
+export const blogPublishSchema = z.object({
+  status: z.enum(["published", "draft", "archived"])
+}).passthrough();

@@ -54,7 +54,19 @@ import {
 import { requireAuth, requireSuperAdmin } from "../middlewares/auth.js";
 import { validate } from "../middlewares/validate.js";
 import { rateLimit } from "../middlewares/rateLimiter/index.js";
-import { adminImpersonateSchema, adminPlanSchema, adminStatusSchema, idParamSchema } from "../validators/schemas.js";
+import { adminImpersonateSchema, adminPlanSchema, adminStatusSchema, idParamSchema, blogCreateSchema, blogUpdateSchema } from "../validators/schemas.js";
+import { requireBlogPermission } from "../middlewares/blogPermission.js";
+import {
+  getAdminBlogs,
+  getAdminBlogById,
+  createBlog,
+  updateBlog,
+  publishBlog,
+  unpublishBlog,
+  deleteBlog,
+  uploadBlogImage
+} from "../controllers/admin/blogController.js";
+import { blogImageUpload } from "../middlewares/upload.js";
 
 const adminRouter = Router();
 
@@ -121,5 +133,17 @@ adminRouter.put("/agents/:agentId/approve", rateLimit("admin"), approveAgent);
 // Agent Payout Requests
 adminRouter.get("/payout-requests", rateLimit("admin"), getPayoutRequests);
 adminRouter.post("/payout-requests/:id/process", rateLimit("admin"), processPayoutRequest);
+
+// Blogs
+adminRouter.get("/blogs", rateLimit("admin"), requireBlogPermission("read"), getAdminBlogs);
+adminRouter.post("/blogs", rateLimit("admin"), requireBlogPermission("create"), validate(blogCreateSchema), createBlog);
+// IMPORTANT: /blogs/upload must be before /blogs/:id to avoid route collision
+adminRouter.post("/blogs/upload", rateLimit("admin"), requireBlogPermission("update"), blogImageUpload.single("image"), uploadBlogImage);
+// Gap #6: Single-post endpoint — registered before /:id sub-routes
+adminRouter.get("/blogs/:id", rateLimit("admin"), requireBlogPermission("read"), validate(idParamSchema, "params"), getAdminBlogById);
+adminRouter.patch("/blogs/:id", rateLimit("admin"), requireBlogPermission("update"), validate(idParamSchema, "params"), validate(blogUpdateSchema), updateBlog);
+adminRouter.post("/blogs/:id/publish", rateLimit("admin"), requireBlogPermission("publish"), validate(idParamSchema, "params"), publishBlog);
+adminRouter.post("/blogs/:id/unpublish", rateLimit("admin"), requireBlogPermission("publish"), validate(idParamSchema, "params"), unpublishBlog);
+adminRouter.delete("/blogs/:id", rateLimit("admin"), requireBlogPermission("delete"), validate(idParamSchema, "params"), deleteBlog);
 
 export { adminRouter };

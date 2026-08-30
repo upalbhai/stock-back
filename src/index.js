@@ -23,6 +23,10 @@ async function start() {
     initSubscriptionCron();
   }).catch(err => logger.error("Failed to load subscription cron module", err));
 
+  import("./cron/blogImageCleanup.js").then(({ initBlogCleanupCron }) => {
+    initBlogCleanupCron();
+  }).catch(err => logger.error("Failed to load blog cleanup cron module", err));
+
 
   httpServer.listen(env.PORT, () => {
     logger.info(`API running on port ${env.PORT}`);

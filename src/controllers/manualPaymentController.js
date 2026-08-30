@@ -15,7 +15,6 @@ import {
   resolveUtr,
   hasScreenshotFile,
   addBillingPeriod,
-  saveManualPaymentScreenshot,
   screenshotAbsolutePath
 } from "../utils/manualPaymentProof.js";
 import fs from "fs/promises";
@@ -46,7 +45,7 @@ export async function getBankDetails(req, res, next) {
 // Owner: Submit UTR + optional screenshot for bank transfer
 export async function uploadManualPayment(req, res, next) {
   try {
-    const { utr, screenshotBase64, notes } = req.body;
+    const { utr, notes } = req.body;
     const businessId = req.user?.businessId;
 
     if (!businessId) {
@@ -93,10 +92,9 @@ export async function uploadManualPayment(req, res, next) {
 
     let screenshotPath = null;
     let screenshotMime = null;
-    if (screenshotBase64) {
-      const saved = await saveManualPaymentScreenshot(businessId, screenshotBase64);
-      screenshotPath = saved.screenshotPath;
-      screenshotMime = saved.mimeType;
+    if (req.file) {
+      screenshotPath = req.file.filename;
+      screenshotMime = req.file.mimetype;
     }
 
     const billingCycle = business.customPlanDetails.billingCycle === "yearly" ? "yearly" : "monthly";

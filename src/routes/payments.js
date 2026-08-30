@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { createOrder, verifyPayment, webhookHandler, getSubscriptionStatus, requestGracePeriod, getPaymentHistory } from "../controllers/paymentController.js";
 import { uploadManualPayment, getBankDetails } from "../controllers/manualPaymentController.js";
+import { paymentProofUpload } from "../middlewares/upload.js";
 import { requireAuth } from "../middlewares/auth.js";
 import { rateLimit } from "../middlewares/rateLimiter/index.js";
 
@@ -18,7 +19,7 @@ paymentRouter.post("/verify", rateLimit("payments"), verifyPayment);
 paymentRouter.get("/status", rateLimit("payments"), getSubscriptionStatus);
 paymentRouter.get("/history", rateLimit("payments"), getPaymentHistory);
 paymentRouter.get("/bank-details", rateLimit("payments"), getBankDetails);
-paymentRouter.post("/manual", rateLimit("payments"), uploadManualPayment);
+paymentRouter.post("/manual", rateLimit("payments"), paymentProofUpload.single("screenshot"), uploadManualPayment);
 paymentRouter.post("/request-grace", rateLimit("payments"), requestGracePeriod);
 
 export { paymentRouter };
