@@ -4,6 +4,13 @@ import { BlogPost } from "../../models/BlogPost.js";
 import { AuditLog } from "../../models/AuditLog.js";
 import { cleanupRemovedImages, cleanupAllPostImages } from "../../utils/blogImageCleanup.js";
 import { sanitizeBlogContent } from "../../utils/sanitizeBlogContent.js";
+
+const calculateReadingTime = (text) => {
+  if (!text) return 0;
+  const wordsPerMinute = 200;
+  const words = text.replace(/(<([^>]+)>)/gi, "").trim().split(/\s+/).length;
+  return Math.ceil(words / wordsPerMinute);
+};
 // @route   GET /api/admin/blogs
 // @desc    Get all blogs for admin CMS
 export const getAdminBlogs = async (req, res, next) => {
@@ -54,7 +61,10 @@ export const createBlog = async (req, res, next) => {
     delete data.status;
 
     // Gap #3: Sanitize HTML content to prevent XSS
-    if (data.content) data.content = sanitizeBlogContent(data.content);
+    if (data.content) {
+      data.content = sanitizeBlogContent(data.content);
+      data.readingTime = calculateReadingTime(data.content);
+    }
 
     // Check if slug exists
     if (data.slug) {
@@ -96,7 +106,10 @@ export const updateBlog = async (req, res, next) => {
     delete data.status;
 
     // Gap #3: Sanitize HTML content to prevent XSS
-    if (data.content) data.content = sanitizeBlogContent(data.content);
+    if (data.content) {
+      data.content = sanitizeBlogContent(data.content);
+      data.readingTime = calculateReadingTime(data.content);
+    }
 
     if (data.slug) {
       const existing = await BlogPost.findOne({ slug: data.slug, _id: { $ne: id } });

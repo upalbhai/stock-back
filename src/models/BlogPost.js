@@ -21,7 +21,10 @@ const blogPostSchema = new Schema(
     canonicalUrl: { type: String, trim: true },
     ogImage: { type: String },
     tags: { type: [String], default: [] },
-    noindex: { type: Boolean, default: false }
+    noindex: { type: Boolean, default: false },
+    readingTime: { type: Number, default: 0 }, // Reading time in minutes
+    focusKeyword: { type: String, trim: true },
+    metaRobots: { type: String, trim: true }
   },
   { timestamps: true }
 );

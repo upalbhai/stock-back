@@ -24,6 +24,8 @@ export const getPublishedBlogs = async (req, res, next) => {
 
     const total = await BlogPost.countDocuments(query);
 
+    res.setHeader('Cache-Control', 'public, max-age=60, stale-while-revalidate=300');
+
     res.json({
       success: true,
       data: {
@@ -57,6 +59,8 @@ export const getPublishedBlogBySlug = async (req, res, next) => {
     if (!post) {
       return res.status(404).json({ success: false, message: "Blog post not found" });
     }
+
+    res.setHeader('Cache-Control', 'public, max-age=60, stale-while-revalidate=300');
 
     res.json({
       success: true,
