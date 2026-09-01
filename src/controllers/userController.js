@@ -444,8 +444,45 @@ async function acceptInvite(req, res, next) {
   }
 }
 
+async function changeUserPassword(req, res, next) {
+  try {
+    const { businessId } = req.user;
+    const { newPassword } = req.body;
+    
+    const user = await User.findOne({ _id: req.params.id, businessId });
+    if (!user) return errorResponse({
+      res: res,
+      statusCode: 404,
+      message: "User not found"
+    });
+
+    user.passwordHash = await bcrypt.hash(newPassword, 10);
+    await user.save();
+
+    await AuditLog.create({
+      businessId,
+      actorId: req.user?.userId,
+      module: "users",
+      action: "change_user_password",
+      targetType: "User",
+      targetId: user._id,
+      targetName: user.name,
+      message: `Password changed by owner for staff: ${user.name}`,
+      ip: req.ip
+    });
+
+    return successResponse({
+      res: res,
+      message: "Password updated successfully"
+    });
+  } catch (error) {
+    return next(error);
+  }
+}
+
 export {
   acceptInvite,
+  changeUserPassword,
   createInvite,
   createUser,
   deleteUser,

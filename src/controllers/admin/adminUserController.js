@@ -44,6 +44,58 @@ async function createSystemAdmin(req, res, next) {
   }
 }
 
+import { EmailOtp } from "../../models/EmailOtp.js";
+
+async function getOtpLogs(req, res, next) {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const skip = (page - 1) * limit;
+
+    const [logs, total] = await Promise.all([
+      EmailOtp.find()
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(Math.min(limit, 100))
+        .lean(),
+      EmailOtp.countDocuments()
+    ]);
+
+    return successResponse({ res, data: { logs, total } });
+  } catch (error) {
+    return next(error);
+  }
+}
+
+async function adminChangeUserPassword(req, res, next) {
+  try {
+    const { newPassword } = req.body;
+    
+    const user = await User.findById(req.params.id);
+    if (!user) return errorResponse({ res, statusCode: 404, message: "User not found" });
+
+    user.passwordHash = await bcrypt.hash(newPassword, 10);
+    await user.save();
+
+    await AuditLog.create({
+      actorId: req.user?.userId,
+      module: "admin",
+      action: "change_user_password",
+      targetType: "User",
+      targetId: user._id,
+      targetName: user.name,
+      message: `System admin changed password for user: ${user.email}`,
+      ip: req.ip
+    });
+
+    return successResponse({ res, message: "Password updated successfully" });
+  } catch (error) {
+    return next(error);
+  }
+}
+
 export {
-  createSystemAdmin
+  createSystemAdmin,
+  getOtpLogs,
+  adminChangeUserPassword
 };

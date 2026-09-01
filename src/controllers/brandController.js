@@ -8,8 +8,9 @@ async function listBrands(req, res, next) {
     const { businessId } = req.user;
     const { search, includeInactive, page = 1, limit = 50 } = req.query;
 
-    const numLimit = Number(limit);
-    const skip = (Number(page) - 1) * numLimit;
+    const numLimit = Math.min(Number(limit) || 50, 500);
+    const numPage = Math.max(Number(page) || 1, 1);
+    const skip = (numPage - 1) * numLimit;
 
     const query = { businessId };
     

@@ -29,7 +29,6 @@ const blogPostSchema = new Schema(
   { timestamps: true }
 );
 
-blogPostSchema.index({ slug: 1 }, { unique: true });
 blogPostSchema.index({ status: 1, publishedAt: -1 });
 
 const BlogPost = mongoose.models.BlogPost || mongoose.model("BlogPost", blogPostSchema);

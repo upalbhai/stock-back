@@ -9,6 +9,17 @@ const PRIVATE_IP = /^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|127\.|::1|localh
 
 const FALLBACK = { city: "Unknown", region: "", country: "Unknown" };
 
+export function getCachedLocation(ip) {
+  if (!ip || PRIVATE_IP.test(ip)) return { ...FALLBACK };
+  const cleanIp = ip.replace(/^::ffff:/, "");
+  if (PRIVATE_IP.test(cleanIp)) return { ...FALLBACK };
+  const cached = CACHE.get(cleanIp);
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+    return { ...cached.data };
+  }
+  return null;
+}
+
 /**
  * Resolve an IP address to { city, region, country }.
  * Returns FALLBACK for private/local IPs or if the API is unreachable.
@@ -32,7 +43,7 @@ export async function resolveLocation(ip) {
 
   try {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 3000); // 3s timeout
+    const timeout = setTimeout(() => controller.abort(), 1500); // 1.5s max timeout
 
     const res = await fetch(`http://ip-api.com/json/${cleanIp}?fields=city,regionName,country,status`, {
       signal: controller.signal
@@ -58,7 +69,7 @@ export async function resolveLocation(ip) {
     // Cache result
     CACHE.set(cleanIp, { data, timestamp: Date.now() });
 
-    // Evict old entries periodically (keep cache bounded)
+    // Evict old entries periodically
     if (CACHE.size > 500) {
       const now = Date.now();
       for (const [key, val] of CACHE) {
@@ -68,7 +79,7 @@ export async function resolveLocation(ip) {
 
     return data;
   } catch (err) {
-    // Network error, timeout, etc. — fail silently
+    // Fail silently with fallback
     return { ...FALLBACK };
   }
 }

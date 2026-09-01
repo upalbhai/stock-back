@@ -11,6 +11,9 @@ const emailOtpSchema = new Schema(
   { timestamps: true }
 );
 emailOtpSchema.index({ email: 1, used: 1 });
+// TTL index: Automatically delete documents 7 days after creation (7 * 24 * 60 * 60 = 604800 seconds)
+emailOtpSchema.index({ createdAt: 1 }, { expireAfterSeconds: 604800 });
+
 const EmailOtp = mongoose.models.EmailOtp || mongoose.model("EmailOtp", emailOtpSchema);
 export {
   EmailOtp

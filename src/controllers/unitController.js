@@ -12,25 +12,45 @@ async function listUnits(req, res, next) {
     const { businessId } = req.user;
     const { outletId, flat, page = 1, limit = 50, search } = req.query;
     const term = String(search || "").trim();
+    
     const query = { businessId, isActive: true };
-    const and = [];
-    if (outletId) and.push({ $or: [{ outletId }, { outletId: null }] });
+    if (outletId) {
+      query.$or = [{ outletId }, { outletId: null }];
+    }
+    
     if (term) {
-      and.push({
+      // Using $or for outletId and search at the same time requires $and,
+      // but if outletId is not present, we can just use $or directly
+      const searchOr = {
         $or: [
           { name: { $regex: term, $options: "i" } },
           { abbreviation: { $regex: term, $options: "i" } },
           { key: { $regex: term, $options: "i" } }
         ]
-      });
+      };
+      
+      if (query.$or) {
+        query.$and = [ { $or: query.$or }, searchOr ];
+        delete query.$or;
+      } else {
+        query.$or = searchOr.$or;
+      }
     }
-    if (and.length) query.$and = and;
 
     if (flat === "true") {
-      const numLimit = Number(limit);
-      const numPage = Number(page);
-      const units = await Unit.find(query).sort({ sortOrder: 1, name: 1 }).skip((numPage - 1) * numLimit).limit(numLimit).lean();
-      const total = await Unit.countDocuments(query);
+      const numLimit = Math.min(Number(limit) || 50, 500);
+      const numPage = Math.max(Number(page) || 1, 1);
+      const skip = (numPage - 1) * numLimit;
+
+      const [total, units] = await Promise.all([
+        Unit.countDocuments(query),
+        Unit.find(query)
+          .sort({ sortOrder: 1, name: 1 })
+          .skip(skip)
+          .limit(numLimit)
+          .lean()
+      ]);
+
       const meta = {
         pagination: {
           page: numPage,
@@ -39,6 +59,7 @@ async function listUnits(req, res, next) {
           totalPages: Math.ceil(total / numLimit)
         }
       };
+      
       return successResponse({ res, message: "Units fetched successfully", data: units, meta });
     }
 

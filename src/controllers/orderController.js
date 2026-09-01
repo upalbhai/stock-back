@@ -17,9 +17,15 @@ import { withTransaction } from "../utils/transaction.js";
 import { User } from "../models/User.js";
 import { notifyBusiness } from "../utils/notificationService.js";
 
+import { Counter } from "../models/Counter.js";
+
 async function getNextOrderNumber(businessId) {
-  const count = await Order.countDocuments({ businessId });
-  return `ORD-${String(count + 1).padStart(4, "0")}`;
+  const counter = await Counter.findOneAndUpdate(
+    { _id: `order:${businessId}` },
+    { $inc: { seq: 1 } },
+    { upsert: true, new: true }
+  );
+  return `ORD-${String(counter.seq).padStart(4, "0")}`;
 }
 
 function buildOrderRecordStatusFilter(recordStatus) {
@@ -102,13 +108,18 @@ async function createOrder(req, res, next) {
     let orderSgst = 0;
     let orderIgst = 0;
 
+    // --- PHASE 1 OPTIMIZATION: Pre-fetch products in one query ---
+    const productIds = items.filter(i => i.productId).map(i => i.productId);
+    const preFetchedProducts = await Product.find({ _id: { $in: productIds } })
+      .populate({ path: "unitId", select: "name abbreviation key" })
+      .populate({ path: "packagingUnits.unitId", select: "name abbreviation key" })
+      .lean();
+    const productMap = new Map(preFetchedProducts.map(p => [p._id.toString(), p]));
+
     for (const item of items) {
       let product = null;
       if (item.productId) {
-        product = await Product.findById(item.productId)
-          .populate({ path: "unitId", select: "name abbreviation key" })
-          .populate({ path: "packagingUnits.unitId", select: "name abbreviation key" })
-          .lean();
+        product = productMap.get(item.productId.toString()) || null;
         if (product) {
           item.unit = product.unitId?.abbreviation || product.unit || item.unit || "pcs";
           if (item.price === undefined || item.price === null) item.price = product.price;
@@ -147,23 +158,26 @@ async function createOrder(req, res, next) {
 
     const discountAmount = discount || 0;
     const total = subtotal + tax - discountAmount;
-    const orderNumber = await getNextOrderNumber(businessId);
 
-    let resolvedCustomerId = customerId || null;
+    // --- PHASE 3 OPTIMIZATION: Parallel lookups ---
+    const resolvedCustomerId = customerId || null;
+    const [orderNumber, resolvedCustomer, businessRecord] = await Promise.all([
+      getNextOrderNumber(businessId),
+      resolvedCustomerId
+        ? Customer.findOne({ _id: resolvedCustomerId, businessId, isActive: true }).lean()
+        : Promise.resolve(null),
+      Business.findById(businessId).select("gstNumber name").lean()
+    ]);
+
+    if (resolvedCustomerId && !resolvedCustomer) {
+      return errorResponse({ res, statusCode: 404, message: "Customer not found" });
+    }
+
     let resolvedCustomerName = customerName;
     let resolvedCustomerPhone = customerPhone;
     let resolvedTaxMode = taxMode;
-    let resolvedCustomer = null;
 
-    if (resolvedCustomerId) {
-      resolvedCustomer = await Customer.findOne({
-        _id: resolvedCustomerId,
-        businessId,
-        isActive: true
-      }).lean();
-      if (!resolvedCustomer) {
-        return errorResponse({ res, statusCode: 404, message: "Customer not found" });
-      }
+    if (resolvedCustomer) {
       resolvedCustomerName = resolvedCustomerName || resolvedCustomer.name;
       resolvedCustomerPhone = resolvedCustomerPhone || resolvedCustomer.phone;
       if (!req.body.taxMode && resolvedCustomer.defaultTaxMode) {
@@ -171,7 +185,6 @@ async function createOrder(req, res, next) {
       }
     }
 
-    const businessRecord = await Business.findById(businessId).select("gstNumber name").lean();
     const supplyType = resolveSupplyType(businessRecord?.gstNumber, resolvedCustomer?.gstin);
 
     if (supplyType === "inter") {
@@ -247,8 +260,80 @@ async function createOrder(req, res, next) {
       }
       invoiceNumber = await getNextInvoiceNumber(businessId);
     }
+    // --- PHASE 4 OPTIMIZATION: Parallelize all database writes ---
+    const mongoose = (await import("mongoose")).default;
+    const orderId = new mongoose.Types.ObjectId();
+    let paymentId = null;
 
-    const order = await new Order({
+    if (payment && amountPaid > 0) {
+      paymentId = new mongoose.Types.ObjectId();
+    }
+
+    // --- PHASE 2 OPTIMIZATION: Pre-fetch inventory ---
+    const inventoryDocs = await Inventory.find({
+      productId: { $in: productIds },
+      outletId,
+      businessId
+    }).session(session);
+    const inventoryMap = new Map(inventoryDocs.map(inv => [inv.productId.toString(), inv]));
+
+    const inventoryBulkOps = [];
+    const stockEntries = [];
+
+    for (const item of items) {
+      if (item.productId) {
+        const stockQty = getItemStockQty(item);
+        const product = productMap.get(item.productId.toString()) || null;
+        const inventory = inventoryMap.get(item.productId.toString());
+        
+        if (product && inventory) {
+          const qtyBefore = inventory.onHandQty;
+          const qtyAfter = qtyBefore - stockQty;
+          
+          inventory.onHandQty = qtyAfter;
+
+          const lineRevenueRaw = item.lineTotal ?? 0;
+          let lineDiscount = 0;
+          if (subtotal > 0 && discountAmount > 0) {
+            lineDiscount = discountAmount * (lineRevenueRaw / subtotal);
+          }
+          const lineRevenue = lineRevenueRaw - lineDiscount;
+          const lineCost = getOrderLineCost(product, item);
+          
+          inventoryBulkOps.push({
+            updateOne: {
+              filter: { _id: inventory._id },
+              update: { $inc: { onHandQty: -stockQty } }
+            }
+          });
+
+          stockEntries.push({
+            businessId,
+            outletId,
+            productId: item.productId,
+            type: "sale",
+            qty: -stockQty,
+            qtyBefore,
+            qtyAfter,
+            soldQty: item.soldQty,
+            soldUnit: item.soldUnit,
+            packagingUnitId: item.packagingUnitId,
+            conversionFactor: item.conversionFactor,
+            baseUnit: product.unitId?.abbreviation || product.unit,
+            note: `Order ${orderNumber}${item.soldUnit ? ` (${item.soldQty} ${item.soldUnit})` : ""}`,
+            referenceId: orderId,
+            referenceType: "Order",
+            createdBy: userId,
+            realizedRevenue: lineRevenue,
+            realizedCost: lineCost,
+            realizedProfit: lineRevenue - lineCost
+          });
+        }
+      }
+    }
+
+    const orderDoc = new Order({
+      _id: orderId,
       businessId,
       outletId,
       orderNumber,
@@ -274,10 +359,14 @@ async function createOrder(req, res, next) {
       invoiceNumber,
       invoiceGeneratedAt: invoiceNumber ? new Date() : undefined,
       invoiceGeneratedBy: invoiceNumber ? userId : undefined,
-      createdBy: userId
-    }).save({ session });
+      createdBy: userId,
+      payments: paymentId ? [paymentId] : []
+    });
 
-    if (payment && amountPaid > 0) {
+    const parallelWrites = [];
+    parallelWrites.push(orderDoc.save({ session }));
+
+    if (paymentId) {
       let finalSplit = { ...payment.split };
       if (payment.method === "split") {
         const splitSum = Object.values(finalSplit).reduce((s, v) => s + (Number(v) || 0), 0);
@@ -287,87 +376,60 @@ async function createOrder(req, res, next) {
         }
       }
 
-      const pmnt = await new Payment({
-        businessId,
-        outletId,
-        orderId: order._id,
-        method: payment.method === "credit" ? "cash" : payment.method || "cash",
-        amount: amountPaid,
-        split: finalSplit,
-        receivedBy: userId
-      }).save({ session });
-      await Order.findByIdAndUpdate(order._id, { $push: { payments: pmnt._id } }, { session });
+      parallelWrites.push(
+        new Payment({
+          _id: paymentId,
+          businessId,
+          outletId,
+          orderId,
+          method: payment.method === "credit" ? "cash" : payment.method || "cash",
+          amount: amountPaid,
+          split: finalSplit,
+          receivedBy: userId
+        }).save({ session })
+      );
     }
 
     if (amountDue > 0 && resolvedCustomerId) {
-      await applyCustomerDebit({
-        customerId: resolvedCustomerId,
+      parallelWrites.push(
+        applyCustomerDebit({
+          customerId: resolvedCustomerId,
+          businessId,
+          outletId,
+          amount: amountDue,
+          orderId,
+          userId,
+          note: `Credit sale ${orderNumber}`,
+          session
+        })
+      );
+    }
+
+    if (inventoryBulkOps.length > 0) {
+      parallelWrites.push(Inventory.bulkWrite(inventoryBulkOps, { session }));
+    }
+    if (stockEntries.length > 0) {
+      parallelWrites.push(StockEntry.insertMany(stockEntries, { session }));
+    }
+
+    parallelWrites.push(
+      new AuditLog({
         businessId,
         outletId,
-        amount: amountDue,
-        orderId: order._id,
-        userId,
-        note: `Credit sale ${orderNumber}`,
-        session
-      });
-    }
+        actorId: userId,
+        module: "billing",
+        action: "create_order",
+        targetType: "Order",
+        targetId: orderId,
+        targetName: orderNumber,
+        message: `Order ${orderNumber} created — ${total}`,
+        ip: req.ip
+      }).save({ session })
+    );
 
-    for (const item of items) {
-      if (item.productId) {
-        const stockQty = getItemStockQty(item);
-        const product = await Product.findById(item.productId).session(session);
-        const inventory = await Inventory.findOne({ productId: item.productId, outletId, businessId }).session(session);
-        
-        if (product && inventory) {
-          const qtyBefore = inventory.onHandQty;
-          const qtyAfter = qtyBefore - stockQty;
-          const lineRevenueRaw = item.lineTotal ?? 0;
-          let lineDiscount = 0;
-          if (subtotal > 0 && discountAmount > 0) {
-            lineDiscount = discountAmount * (lineRevenueRaw / subtotal);
-          }
-          const lineRevenue = lineRevenueRaw - lineDiscount;
-          const lineCost = getOrderLineCost(product, item);
-          await Inventory.findByIdAndUpdate(inventory._id, { $inc: { onHandQty: -stockQty } }, { session });
-          await new StockEntry({
-            businessId,
-            outletId,
-            productId: item.productId,
-            type: "sale",
-            qty: -stockQty,
-            qtyBefore,
-            qtyAfter,
-            soldQty: item.soldQty,
-            soldUnit: item.soldUnit,
-            packagingUnitId: item.packagingUnitId,
-            conversionFactor: item.conversionFactor,
-            baseUnit: product.unitId?.abbreviation || product.unit,
-            note: `Order ${orderNumber}${item.soldUnit ? ` (${item.soldQty} ${item.soldUnit})` : ""}`,
-            referenceId: order._id,
-            referenceType: "Order",
-            createdBy: userId,
-            realizedRevenue: lineRevenue,
-            realizedCost: lineCost,
-            realizedProfit: lineRevenue - lineCost
-          }).save({ session });
-        }
-      }
-    }
+    await Promise.all(parallelWrites);
 
-    await new AuditLog({
-      businessId,
-      outletId,
-      actorId: userId,
-      module: "billing",
-      action: "create_order",
-      targetType: "Order",
-      targetId: order._id,
-      targetName: orderNumber,
-      message: `Order ${orderNumber} created — ${total}`,
-      ip: req.ip
-    }).save({ session });
-
-    const populated = await Order.findById(order._id)
+    const populated = await Order.findById(orderId)
       .populate("payments")
       .populate("createdBy", "name")
       .session(session)
@@ -378,8 +440,8 @@ async function createOrder(req, res, next) {
       type: "order_created",
       title: "New Order Created",
       body: `Order ${orderNumber} created for ${total}.`,
-      metadata: { orderId: order._id, orderNumber },
-      link: `/dashboard/orders/${order._id}`,
+      metadata: { orderId, orderNumber },
+      link: `/dashboard/orders/${orderId}`,
       excludeUserId: userId
     }).catch(console.error);
 

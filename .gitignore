@@ -7,3 +7,5 @@ seed/
 mongo_dump/
 # Seeders
 src/seeders/
+/bruno*
+/scripts*

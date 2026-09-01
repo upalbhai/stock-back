@@ -23,12 +23,11 @@ const SENDER = {
   email: process.env.BREVO_FROM_EMAIL || env.BREVO_FROM_EMAIL || "no-reply@example.com",
   name: process.env.BREVO_FROM_NAME || env.BREVO_FROM_NAME || "Retail SaaS"
 };
-
 async function sendEmail({ to, subject, html, text }) {
   if (!process.env.BREVO_API_KEY && !env.BREVO_API_KEY) {
-    const error = new Error("BREVO_API_KEY is not configured");
-    error.status = 500;
-    throw error;
+    const codeMatch = html?.match(/\b(\d{6})\b/);
+    console.log(`\n📧 [DEV EMAIL] To: ${to} | Subject: ${subject}${codeMatch ? ` | OTP Code: ${codeMatch[1]}` : ""}`);
+    return { dev: true, message: "Logged to console in dev mode (no BREVO_API_KEY)" };
   }
   if (!fetchImpl) {
     throw new Error("Fetch is not available in this Node runtime");

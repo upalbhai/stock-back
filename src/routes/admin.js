@@ -30,8 +30,13 @@ import {
   adminSendSubscriptionEmail
 } from "../controllers/admin/subscriptionController.js";
 import {
-  createSystemAdmin
+  createSystemAdmin,
+  getOtpLogs,
+  adminChangeUserPassword
 } from "../controllers/admin/adminUserController.js";
+import {
+  adminPurgeUserData
+} from "../controllers/admin/adminPurgeController.js";
 import {
   getSettings,
   updateSettings
@@ -54,7 +59,7 @@ import {
 import { requireAuth, requireSuperAdmin } from "../middlewares/auth.js";
 import { validate } from "../middlewares/validate.js";
 import { rateLimit } from "../middlewares/rateLimiter/index.js";
-import { adminImpersonateSchema, adminPlanSchema, adminStatusSchema, idParamSchema, blogCreateSchema, blogUpdateSchema } from "../validators/schemas.js";
+import { adminImpersonateSchema, adminPlanSchema, adminStatusSchema, idParamSchema, blogCreateSchema, blogUpdateSchema, changePasswordSchema } from "../validators/schemas.js";
 import { requireBlogPermission } from "../middlewares/blogPermission.js";
 import {
   getAdminBlogs,
@@ -117,8 +122,11 @@ adminRouter.put("/payments/manual/:paymentId/verify", rateLimit("admin"), verify
 adminRouter.put("/payments/manual/:paymentId/reject", rateLimit("admin"), rejectManualPayment);
 adminRouter.post("/payments/manual/:paymentId/resend-invoice", rateLimit("admin"), resendManualPaymentInvoice);
 
-// System Admin User Management
+// System Admin User Management & Test Data Purge
 adminRouter.post("/system-users", rateLimit("admin"), createSystemAdmin);
+adminRouter.post("/users/:id/change-password", rateLimit("admin"), validate(idParamSchema, "params"), validate(changePasswordSchema), adminChangeUserPassword);
+adminRouter.delete("/users/:userId/purge", rateLimit("admin"), adminPurgeUserData);
+adminRouter.get("/otp-logs", rateLimit("admin"), getOtpLogs);
 
 // Global Platform Settings
 adminRouter.get("/settings", rateLimit("admin"), getSettings);

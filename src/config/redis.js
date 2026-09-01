@@ -3,45 +3,32 @@ import { env } from "./env.js";
 import { logger } from "../utils/logger.js";
 
 /**
- * @fileoverview Redis client configuration with reconnection strategy.
- *
- * Exports:
- *  - redisClient   — The singleton Redis client instance
- *  - connectRedis  — Connect (or reconnect) to Redis
- *  - isRedisReady  — Check if Redis is connected and responsive
+ * @fileoverview Redis client configuration with graceful fallback when Redis is offline.
  */
 
 const redisClient = createClient({
   url: env.REDIS_URL,
   socket: {
-    // Reconnect with exponential backoff (capped at 5 seconds)
     reconnectStrategy(retries) {
-      if (retries > 20) {
-        logger.error("Redis: max reconnection attempts reached — giving up");
-        return new Error("Redis max reconnection attempts reached");
+      if (retries > 3) {
+        return false; // Stop retrying if Redis is not running locally
       }
-      const delay = Math.min(retries * 200, 5000);
-      logger.warn(`Redis: reconnecting in ${delay}ms (attempt ${retries})`);
-      return delay;
+      return Math.min(retries * 200, 1000);
     },
-    connectTimeout: 10_000,
+    connectTimeout: 3000,
   },
 });
 
 // ── Event listeners ──────────────────────────────────────────
 redisClient.on("error", (err) => {
-  // Avoid noisy logs during expected reconnection cycles
-  if (!err.message?.includes("reconnect")) {
-    logger.error("Redis Client Error", err);
+  // Silence connection errors when Redis is not running locally
+  if (err.code !== "ECONNREFUSED") {
+    logger.error("Redis Client Error", err.message);
   }
 });
 
 redisClient.on("connect", () => {
   logger.info("Redis Client Connected");
-});
-
-redisClient.on("reconnecting", () => {
-  logger.warn("Redis Client Reconnecting...");
 });
 
 redisClient.on("ready", () => {
@@ -50,21 +37,16 @@ redisClient.on("ready", () => {
 
 // ── Public API ───────────────────────────────────────────────
 
-/**
- * Connect to Redis if not already connected.
- * Safe to call multiple times — only connects once.
- */
 export const connectRedis = async () => {
-  if (!redisClient.isOpen) {
-    await redisClient.connect();
+  try {
+    if (!redisClient.isOpen) {
+      await redisClient.connect();
+    }
+  } catch (err) {
+    logger.warn("Redis server is not running locally — proceeding without Redis cache/rate limiting.");
   }
 };
 
-/**
- * Check if Redis is connected and ready to accept commands.
- *
- * @returns {boolean}
- */
 export function isRedisReady() {
   return redisClient.isReady;
 }

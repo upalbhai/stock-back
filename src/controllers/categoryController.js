@@ -13,23 +13,28 @@ async function listCategories(req, res, next) {
     const term = String(search || "").trim();
     
     const query = { businessId, isActive: true };
-    const and = [];
-    if (outletId) and.push({ $or: [{ outletId }, { outletId: null }] });
-    if (term) {
-      and.push({
-        $or: [
-          { name: { $regex: term, $options: "i" } }
-        ]
-      });
+    if (outletId) {
+      query.$or = [{ outletId }, { outletId: null }];
     }
-    if (and.length) query.$and = and;
+    if (term) {
+      query.name = { $regex: term, $options: "i" };
+    }
 
     // If flat=true, return a flat list with pagination like products
     if (flat === "true") {
-      const numLimit = Number(limit);
-      const numPage = Number(page);
-      const categories = await Category.find(query).sort({ parentId: 1, sortOrder: 1, name: 1 }).skip((numPage - 1) * numLimit).limit(numLimit).lean();
-      const total = await Category.countDocuments(query);
+      const numLimit = Math.min(Number(limit) || 50, 500);
+      const numPage = Math.max(Number(page) || 1, 1);
+      const skip = (numPage - 1) * numLimit;
+
+      const [total, categories] = await Promise.all([
+        Category.countDocuments(query),
+        Category.find(query)
+          .sort({ parentId: 1, sortOrder: 1, name: 1 })
+          .skip(skip)
+          .limit(numLimit)
+          .lean()
+      ]);
+
       const meta = {
         pagination: {
           page: numPage,
@@ -38,6 +43,7 @@ async function listCategories(req, res, next) {
           totalPages: Math.ceil(total / numLimit)
         }
       };
+      
       return successResponse({
         res: res,
         message: "Categories fetched successfully",
@@ -47,18 +53,37 @@ async function listCategories(req, res, next) {
     }
 
     // Otherwise return nested tree (no pagination)
-    const categories = await Category.find(query).sort({ parentId: 1, sortOrder: 1, name: 1 }).lean();
-    const topLevel = categories.filter((c) => !c.parentId);
-    const buildTree = (parent) => ({
-      ...parent,
-      children: categories.filter(
-        (c) => c.parentId?.toString() === parent._id.toString()
-      )
-    });
+    const categories = await Category.find(query)
+      .sort({ sortOrder: 1, name: 1 })
+      .lean();
+    
+    // O(n) Tree Construction using Map (handles infinite nesting depth)
+    const categoryMap = new Map();
+    for (const c of categories) {
+      c.children = [];
+      categoryMap.set(c._id.toString(), c);
+    }
+
+    const topLevel = [];
+    for (const c of categories) {
+      if (c.parentId) {
+        const parent = categoryMap.get(c.parentId.toString());
+        if (parent) {
+          parent.children.push(c);
+        } else {
+          // Parent not found (or inactive), treat as top-level
+          topLevel.push(c);
+        }
+      } else {
+        topLevel.push(c);
+      }
+    }
+
     return successResponse({
       res: res,
+      message: "Categories fetched successfully",
       data: {
-        categories: topLevel.map(buildTree)
+        categories: topLevel
       }
     });
   } catch (error) {

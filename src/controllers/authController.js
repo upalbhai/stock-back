@@ -19,7 +19,7 @@ import { SystemSetting } from "../models/SystemSetting.js";
 import mailer from "../utils/mailer.js";
 import crypto from "crypto";
 import { parseDevice } from "../utils/parseDevice.js";
-import { resolveLocation } from "../utils/geoip.js";
+import { resolveLocation, getCachedLocation } from "../utils/geoip.js";
 import { seedStandardUnits } from "../seeders/standardUnits.js";
 import { withTransaction } from "../utils/transaction.js";
 
@@ -32,16 +32,66 @@ function makeOutletCode(name) {
 }
 
 async function buildAuthUserResponse(user, subscriptionOverrides = {}) {
+  let biz = subscriptionOverrides.biz || null;
+  let settings = subscriptionOverrides.settings || null;
+  let outlets = null;
+
+  // 1. Fetch missing DB context concurrently
+  const promises = [];
+  
+  if (user.businessId && user.role !== "superadmin") {
+    if (!biz) {
+      promises.push(
+        Business.findById(user.businessId)
+          .select("subscriptionStatus trialEndsAt currentPeriodEnd gracePeriodEndsAt planId planType businessProfile enabledFeatures currency")
+          .populate("planId", "planType featureKeys")
+          .lean()
+          .then(b => { biz = b; })
+      );
+    }
+    promises.push(
+      Outlet.find({ businessId: user.businessId, isActive: true, status: "active" })
+        .lean()
+        .then(o => { outlets = o; })
+    );
+  }
+
+  if (!settings) {
+    promises.push(
+      SystemSetting.findOne()
+        .lean()
+        .then(s => { settings = s; })
+    );
+  }
+
+  if (promises.length > 0) {
+    await Promise.all(promises);
+  }
+
+  // 2. Resolve default outlet
   let primaryOutletId = user.outletIds?.[0]?.toString() || undefined;
   let resolvedOutletIds = user.outletIds?.map((id) => id.toString()) || [];
 
   if (!primaryOutletId && user.businessId) {
-    const firstOutlet = await Outlet.findOne({ businessId: user.businessId }).lean();
-    if (firstOutlet) {
-      primaryOutletId = firstOutlet._id.toString();
+    if (outlets && outlets.length > 0) {
+      primaryOutletId = outlets[0]._id.toString();
       resolvedOutletIds = [primaryOutletId];
+    } else {
+      const firstOutlet = await Outlet.findOne({ businessId: user.businessId }).lean();
+      if (firstOutlet) {
+        primaryOutletId = firstOutlet._id.toString();
+        resolvedOutletIds = [primaryOutletId];
+      }
     }
   }
+
+  // Ensure outlets is an array
+  if (user.businessId && !outlets) {
+     outlets = await Outlet.find({ businessId: user.businessId, isActive: true, status: "active" }).lean();
+  }
+  outlets = outlets || [];
+
+  // 3. Subscription & Context calculation
   let subscriptionStatus = subscriptionOverrides.subscriptionStatus ?? null;
   let trialEndsAt = subscriptionOverrides.trialEndsAt ?? null;
   let trialExpired = subscriptionOverrides.trialExpired ?? false;
@@ -50,35 +100,30 @@ async function buildAuthUserResponse(user, subscriptionOverrides = {}) {
   let planType = null;
   let currency = null;
 
-  if (user.businessId && user.role !== "superadmin") {
-    const biz = await Business.findById(user.businessId)
-      .select("subscriptionStatus trialEndsAt currentPeriodEnd gracePeriodEndsAt planId planType businessProfile enabledFeatures currency")
-      .lean();
-    if (biz) {
-      if (subscriptionStatus === null) {
-        subscriptionStatus = biz.subscriptionStatus;
-        const now = new Date();
-        if (subscriptionStatus === "trial" && biz.trialEndsAt && now > new Date(biz.trialEndsAt)) {
-          subscriptionStatus = "payment_locked";
-        } else if (subscriptionStatus === "active" && biz.currentPeriodEnd && now > new Date(biz.currentPeriodEnd)) {
-          subscriptionStatus = "payment_locked";
-        } else if (subscriptionStatus === "grace_period" && biz.gracePeriodEndsAt && now > new Date(biz.gracePeriodEndsAt)) {
-          subscriptionStatus = "payment_locked";
-        }
+  if (biz) {
+    if (subscriptionStatus === null) {
+      subscriptionStatus = biz.subscriptionStatus;
+      const now = new Date();
+      if (subscriptionStatus === "trial" && biz.trialEndsAt && now > new Date(biz.trialEndsAt)) {
+        subscriptionStatus = "payment_locked";
+      } else if (subscriptionStatus === "active" && biz.currentPeriodEnd && now > new Date(biz.currentPeriodEnd)) {
+        subscriptionStatus = "payment_locked";
+      } else if (subscriptionStatus === "grace_period" && biz.gracePeriodEndsAt && now > new Date(biz.gracePeriodEndsAt)) {
+        subscriptionStatus = "payment_locked";
       }
-      if (trialEndsAt === null) trialEndsAt = biz.trialEndsAt;
-      let plan = null;
-      if (biz.planId) {
-        plan = await Plan.findById(biz.planId).select("planType featureKeys").lean();
-      }
-      const ctx = getBusinessContextFromDoc(biz, plan);
-      enabledFeatures = ctx.enabledFeatures;
-      businessProfile = ctx.businessProfile;
-      planType = ctx.planType;
-      currency = biz.currency || "INR";
     }
+    if (trialEndsAt === null) trialEndsAt = biz.trialEndsAt;
+    
+    const plan = typeof biz.planId === "object" ? biz.planId : null;
+    const ctx = getBusinessContextFromDoc(biz, plan);
+    
+    enabledFeatures = ctx.enabledFeatures;
+    businessProfile = ctx.businessProfile;
+    planType = ctx.planType;
+    currency = biz.currency || "INR";
   }
 
+  // 4. Merge permissions
   const rolePerms = user.roleId?.permissions || [];
   const customPerms = user.customPermissions || [];
   const mergedMap = new Map();
@@ -99,12 +144,6 @@ async function buildAuthUserResponse(user, subscriptionOverrides = {}) {
     permissions.push({ module, actions: Array.from(actionsSet) });
   }
 
-  let outlets = [];
-  if (user.businessId) {
-    outlets = await Outlet.find({ businessId: user.businessId, isActive: true, status: "active" }).lean();
-  }
-
-  const settings = await SystemSetting.findOne().lean();
   const maintenanceMode = settings ? Boolean(settings.maintenanceMode) : false;
 
   return {
@@ -165,9 +204,12 @@ async function createLoginSession({ user, req, tokenPayload, session = null }) {
   const userAgent = req.headers["user-agent"] || "";
   const ip = req.ip || req.connection?.remoteAddress || "";
   const device = parseDevice(userAgent);
-  const location = await resolveLocation(ip);
+  
+  // Non-blocking location: use memory cache immediately or fallback; resolve in background
+  const cachedLoc = getCachedLocation(ip);
+  const location = cachedLoc || { city: "Unknown", region: "", country: "Unknown" };
 
-  // Create JWT with a placeholder sessionId (we'll update after session creation)
+  // Create JWT with a placeholder sessionId
   const sessionId = new mongoose.Types.ObjectId();
   const token = createToken({ ...tokenPayload, sessionId: sessionId.toString() });
   const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
@@ -187,16 +229,22 @@ async function createLoginSession({ user, req, tokenPayload, session = null }) {
     expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) // 7 days
   }).save({ session });
 
-  // Detect new device: check if user has logged in with this deviceName before
-  try {
-    const previousSession = await Session.findOne({
-      userId: user._id,
-      deviceName: device.deviceName,
-      _id: { $ne: sessionId }
-    }).session(session);
+  // If location was not in cache, resolve asynchronously and update session
+  if (!cachedLoc) {
+    resolveLocation(ip).then((resolved) => {
+      if (resolved && resolved.city !== "Unknown") {
+        Session.findByIdAndUpdate(sessionId, { location: resolved }).catch(() => {});
+      }
+    }).catch(() => {});
+  }
 
+  // Detect new device asynchronously (non-blocking)
+  Session.findOne({
+    userId: user._id,
+    deviceName: device.deviceName,
+    _id: { $ne: sessionId }
+  }).then((previousSession) => {
     if (!previousSession && user.email) {
-      // New device — send alert email (non-blocking)
       mailer.sendNewDeviceLoginEmail(user.email, user.name, {
         deviceName: device.deviceName,
         location,
@@ -204,16 +252,14 @@ async function createLoginSession({ user, req, tokenPayload, session = null }) {
         time: new Date()
       }).catch((e) => console.warn("Failed to send new device login email", e.message));
     }
-  } catch (e) {
-    console.warn("New device check failed", e.message);
-  }
+  }).catch(() => {});
 
-  // Update user last login info
-  await User.findByIdAndUpdate(user._id, {
+  // Update user last login info asynchronously (non-blocking)
+  User.findByIdAndUpdate(user._id, {
     lastLoginAt: new Date(),
     lastLoginIp: ip,
     lastLoginDevice: userAgent.slice(0, 200)
-  }, { session });
+  }).catch(() => {});
 
   return { token, session: sessionDoc };
 }
@@ -224,7 +270,14 @@ async function register(req, res, next) {
     return await withTransaction(async (session) => {
       const { name, email, password, phone, businessName, outletName, outletId } = req.body;
 
-      const settings = await SystemSetting.findOne().session(session) || { allowNewSignups: true, defaultTrialDays: 14 };
+      // Fetch settings and check existing user in parallel
+      const [settingsDoc, existingEmail, existingPhone] = await Promise.all([
+        SystemSetting.findOne().session(session),
+        User.findOne({ email: email.toLowerCase() }).session(session),
+        phone ? User.findOne({ phone }).session(session) : Promise.resolve(null)
+      ]);
+
+      const settings = settingsDoc || { allowNewSignups: true, defaultTrialDays: 14 };
       if (!settings.allowNewSignups) {
         return errorResponse({
           res: res,
@@ -242,7 +295,6 @@ async function register(req, res, next) {
       }
 
       // Check existing by email
-      const existingEmail = await User.findOne({ email: email.toLowerCase() }).session(session);
       if (existingEmail) {
         return errorResponse({
           res: res,
@@ -252,20 +304,20 @@ async function register(req, res, next) {
       }
 
       // Check existing by phone if provided
-      if (phone) {
-        const existingPhone = await User.findOne({ phone }).session(session);
-        if (existingPhone) {
-          return errorResponse({
-            res: res,
-            statusCode: 409,
-            message: "An account with this phone already exists"
-          });
-        }
+      if (existingPhone) {
+        return errorResponse({
+          res: res,
+          statusCode: 409,
+          message: "An account with this phone already exists"
+        });
       }
 
     let business;
     let finalOutletId = outletId;
     const userId = new mongoose.Types.ObjectId();
+
+    // Run password hashing in parallel with business setup
+    const passwordHashPromise = password ? bcrypt.hash(password, 10) : Promise.resolve(undefined);
 
     if (!outletId && businessName) {
       const bSlug = slugify(businessName);
@@ -305,7 +357,7 @@ async function register(req, res, next) {
       finalOutletId = outlet._id.toString();
     }
 
-    const passwordHash = password ? await bcrypt.hash(password, 10) : undefined;
+    const passwordHash = await passwordHashPromise;
 
     const user = await new User({
       _id: userId,
@@ -320,47 +372,42 @@ async function register(req, res, next) {
       emailVerified: false
     }).save({ session });
 
-    // We don't need to findByIdAndUpdate ownerId anymore since we passed it in creation
-
-    // Create default roles
+    // Seed default roles and standard units concurrently
     if (business) {
-      await createDefaultRoles(business._id.toString(), session);
-      try {
-        await seedStandardUnits(business._id.toString(), session);
-      } catch (e) {
-        console.warn("Seeding standard units failed", e.message);
-      }
+      await Promise.all([
+        createDefaultRoles(business._id.toString(), session),
+        seedStandardUnits(business._id.toString(), session).catch((e) => {
+          console.warn("Seeding standard units failed", e.message);
+        })
+      ]);
     }
 
-    await new AuditLog({
+    // Save audit log non-blocking
+    new AuditLog({
       businessId: business?._id,
       actorId: user._id,
       actorName: user.name,
       actorRole: user.role,
       module: "auth",
       action: "register",
-      message: `New owner registered with 7-day trial: ${user.name}`,
+      message: `New owner registered with trial: ${user.name}`,
       ip: req.ip,
       userAgent: req.headers["user-agent"]
-    }).save({ session });
+    }).save().catch((e) => console.warn("AuditLog save error", e.message));
 
-    // Send welcome email
-    try {
-      const trialEnd = business?.trialEndsAt;
-      await mailer.sendWelcomeEmail(email, name, trialEnd);
-    } catch (e) {
+    // Send welcome email (non-blocking)
+    const trialEnd = business?.trialEndsAt;
+    mailer.sendWelcomeEmail(email, name, trialEnd).catch((e) => {
       console.warn("Failed to send welcome email", e.message);
-    }
+    });
 
-      // Send email verification OTP
-      try {
-        const code = makeCode();
-        const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
-        await new EmailOtp({ email: email.toLowerCase(), code, type: "login", expiresAt }).save({ session });
-        await mailer.sendOtpEmail(email, code);
-      } catch (e) {
-        console.warn("Failed to send verification OTP", e.message);
-      }
+    // Generate and save verification OTP in DB, then dispatch email non-blocking
+    const code = makeCode();
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+    await new EmailOtp({ email: email.toLowerCase(), code, type: "login", expiresAt }).save({ session });
+    mailer.sendOtpEmail(email, code).catch((e) => {
+      console.warn("Failed to send verification OTP", e.message);
+    });
 
       // We no longer return the token instantly here so they are forced to verify their email
       return successResponse({
@@ -377,64 +424,68 @@ async function register(req, res, next) {
 // ---------- LOGIN WITH EMAIL + PASSWORD ----------
 async function loginWithEmail(req, res, next) {
   try {
-    return await withTransaction(async (session) => {
-      const { email, password } = req.body;
-      const user = await User.findOne({ email: email.toLowerCase(), isActive: true }).populate("roleId").session(session).lean();
+    const { email, password } = req.body;
+    const normalizedEmail = email.toLowerCase();
 
-      if (!user) {
-        return errorResponse({
-          res: res,
-          statusCode: 401,
-          message: "Invalid email or password"
-        });
-      }
-      if (!user.passwordHash) {
-        return errorResponse({
-          res: res,
-          statusCode: 401,
-          message: "Password login not set up. Use OTP login instead."
-        });
-      }
+    // Query user and system settings in parallel
+    const [user, settingsDoc] = await Promise.all([
+      User.findOne({ email: normalizedEmail, isActive: true }).populate("roleId").lean(),
+      SystemSetting.findOne().lean()
+    ]);
 
-      const settings = await SystemSetting.findOne().session(session) || { maintenanceMode: false };
-      if (settings.maintenanceMode && user.role !== "superadmin") {
-        return errorResponse({
-          res: res,
-          statusCode: 503,
-          message: "System is currently under maintenance. Please try again later."
-        });
-      }
+    if (!user) {
+      return errorResponse({
+        res: res,
+        statusCode: 401,
+        message: "Invalid email or password"
+      });
+    }
+    if (!user.passwordHash) {
+      return errorResponse({
+        res: res,
+        statusCode: 401,
+        message: "Password login not set up. Use OTP login instead."
+      });
+    }
 
-      const isValid = await bcrypt.compare(password, user.passwordHash);
-      if (!isValid) {
-        return errorResponse({
-          res: res,
-          statusCode: 401,
-          message: "Invalid email or password"
-        });
-      }
+    const settings = settingsDoc || { maintenanceMode: false };
+    if (settings.maintenanceMode && user.role !== "superadmin") {
+      return errorResponse({
+        res: res,
+        statusCode: 503,
+        message: "System is currently under maintenance. Please try again later."
+      });
+    }
 
-    // Check subscription status
+    const isValid = await bcrypt.compare(password, user.passwordHash);
+    if (!isValid) {
+      return errorResponse({
+        res: res,
+        statusCode: 401,
+        message: "Invalid email or password"
+      });
+    }
+
+    // Check subscription status if business user
     let subscriptionStatus = null;
     let trialEndsAt = null;
     let trialExpired = false;
+    let biz = null;
 
     if (user.businessId && user.role !== "superadmin") {
-      const biz = await Business.findById(user.businessId).session(session).lean();
+      biz = await Business.findById(user.businessId).lean();
       if (biz) {
         subscriptionStatus = biz.subscriptionStatus;
         trialEndsAt = biz.trialEndsAt;
 
         if (biz.subscriptionStatus === "trial" && biz.trialEndsAt && new Date() > new Date(biz.trialEndsAt)) {
           trialExpired = true;
-          await Business.findByIdAndUpdate(biz._id, { subscriptionStatus: "expired" }, { session });
+          Business.findByIdAndUpdate(biz._id, { subscriptionStatus: "expired" }).catch(() => {});
           subscriptionStatus = "expired";
-        }
-        if (biz.subscriptionStatus === "expired") {
+        } else if (biz.subscriptionStatus === "expired") {
           trialExpired = true;
-        }
-        if (biz.subscriptionStatus === "active" && biz.currentPeriodEnd && new Date() > new Date(biz.currentPeriodEnd)) {
-          await Business.findByIdAndUpdate(biz._id, { subscriptionStatus: "expired" }, { session });
+        } else if (biz.subscriptionStatus === "active" && biz.currentPeriodEnd && new Date() > new Date(biz.currentPeriodEnd)) {
+          Business.findByIdAndUpdate(biz._id, { subscriptionStatus: "expired" }).catch(() => {});
           subscriptionStatus = "expired";
           trialExpired = true;
         }
@@ -445,7 +496,6 @@ async function loginWithEmail(req, res, next) {
     const { token } = await createLoginSession({
       user,
       req,
-      session,
       tokenPayload: {
         userId: user._id.toString(),
         role: user.role,
@@ -456,26 +506,25 @@ async function loginWithEmail(req, res, next) {
       }
     });
 
-      await new AuditLog({
-        businessId: user.businessId,
-        actorId: user._id,
-        actorName: user.name,
-        actorRole: user.role,
-        module: "auth",
-        action: "login",
-        message: "User logged in via email+password",
-        ip: req.ip,
-        userAgent: req.headers["user-agent"]
-      }).save({ session });
+    // Fire and forget audit log (non-blocking)
+    new AuditLog({
+      businessId: user.businessId,
+      actorId: user._id,
+      actorName: user.name,
+      actorRole: user.role,
+      module: "auth",
+      action: "login",
+      message: "User logged in via email+password",
+      ip: req.ip,
+      userAgent: req.headers["user-agent"]
+    }).save().catch((err) => console.warn("Login audit log failed", err.message));
 
-      return successResponse({
-        res: res,
-
-        data: {
-          token,
-          user: await buildAuthUserResponse(user, { subscriptionStatus, trialEndsAt, trialExpired })
-        }
-      });
+    return successResponse({
+      res: res,
+      data: {
+        token,
+        user: await buildAuthUserResponse(user, { subscriptionStatus, trialEndsAt, trialExpired, biz, settings })
+      }
     });
   } catch (error) {
     return next(error);
@@ -732,11 +781,9 @@ async function forgotPassword(req, res, next) {
       const code = makeCode();
       const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
       await new EmailOtp({ email: email.toLowerCase(), code, type: "login", expiresAt }).save({ session });
-      try {
-        await mailer.sendPasswordResetOtp(email, code);
-      } catch (e) {
+      mailer.sendPasswordResetOtp(email, code).catch((e) => {
         console.warn("Failed to send password reset email", e.message);
-      }
+      });
       return successResponse({
         res: res,
         message: "If an account exists, a reset code has been sent"
@@ -835,9 +882,8 @@ async function createDefaultRoles(businessId, session = null) {
       ]
     }
   ];
-  for (const role of defaultRoles) {
-    await new Role({ businessId, ...role }).save({ session });
-  }
+  const options = session ? { session } : {};
+  await Role.insertMany(defaultRoles.map((role) => ({ businessId, ...role })), options);
 }
 
 // ---------- SETUP / CHANGE PASSWORD ----------

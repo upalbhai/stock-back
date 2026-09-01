@@ -15,16 +15,20 @@ export function initSocket(httpServer) {
     }
   });
 
-  // Setup Redis Adapter for multi-instance scaling
-  const pubClient = redisClient.duplicate();
-  const subClient = redisClient.duplicate();
-  
-  Promise.all([pubClient.connect(), subClient.connect()]).then(() => {
-    io.adapter(createAdapter(pubClient, subClient));
-    logger.info("Socket.IO Redis Adapter initialized");
-  }).catch(err => {
-    logger.error("Failed to initialize Socket.IO Redis Adapter", err);
-  });
+  // Setup Redis Adapter for multi-instance scaling if Redis is connected
+  if (redisClient.isOpen) {
+    const pubClient = redisClient.duplicate();
+    const subClient = redisClient.duplicate();
+    
+    Promise.all([pubClient.connect(), subClient.connect()]).then(() => {
+      io.adapter(createAdapter(pubClient, subClient));
+      logger.info("Socket.IO Redis Adapter initialized");
+    }).catch(err => {
+      logger.warn("Socket.IO running in single-instance mode (Redis connection failed)");
+    });
+  } else {
+    logger.info("Socket.IO running in single-instance mode (Redis offline)");
+  }
 
   // Apply Auth Middleware
   io.use(socketAuth);
@@ -40,7 +44,6 @@ export function initSocket(httpServer) {
       socket.join(`user:${socket.user.userId}`);
     }
     // Join outlet rooms if any are specified in the token payload
-    // Note: The token payload currently contains `outlets` array if they are mapped
     if (socket.user?.outlets && Array.isArray(socket.user.outlets)) {
       socket.user.outlets.forEach(outlet => {
         socket.join(`outlet:${outlet._id || outlet}`);

@@ -11,7 +11,12 @@ import { initSocket } from "./config/socket.js";
 async function start() {
   await connectDatabase();
   await connectRedis();
-  await initRateLimiter(redisClient);
+  
+  if (redisClient.isOpen) {
+    await initRateLimiter(redisClient);
+  } else {
+    logger.info("Rate limiter running in fail-open mode (Redis offline)");
+  }
 
   const app = createApp();
   const httpServer = http.createServer(app);
@@ -26,7 +31,6 @@ async function start() {
   import("./cron/blogImageCleanup.js").then(({ initBlogCleanupCron }) => {
     initBlogCleanupCron();
   }).catch(err => logger.error("Failed to load blog cleanup cron module", err));
-
 
   httpServer.listen(env.PORT, () => {
     logger.info(`API running on port ${env.PORT}`);
