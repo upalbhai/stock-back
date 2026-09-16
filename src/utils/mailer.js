@@ -20,8 +20,8 @@ import {
 const BREVO_API = "https://api.brevo.com/v3/smtp/email";
 const fetchImpl = globalThis.fetch?.bind(globalThis);
 const SENDER = {
-  email: process.env.BREVO_FROM_EMAIL || env.BREVO_FROM_EMAIL || "no-reply@example.com",
-  name: process.env.BREVO_FROM_NAME || env.BREVO_FROM_NAME || "Retail SaaS"
+  email: process.env.BREVO_FROM_EMAIL || env.BREVO_FROM_EMAIL || "noreply@minihisab.com",
+  name: process.env.BREVO_FROM_NAME || env.BREVO_FROM_NAME || "Mini Hisab"
 };
 async function sendEmail({ to, subject, html, text }) {
   if (!process.env.BREVO_API_KEY && !env.BREVO_API_KEY) {
