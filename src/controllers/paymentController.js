@@ -250,7 +250,11 @@ async function getSubscriptionStatus(req, res, next) {
       message: "Business not found"
     });
     
-    const business = await Business.findById(businessId).select("subscriptionStatus trialEndsAt currentPeriodEnd planId maxOutlets maxStaff maxProducts customPlanDetails pendingCustomPlan").populate("planId").lean();
+    const business = await Business.findById(businessId)
+      .select("subscriptionStatus trialEndsAt currentPeriodEnd planId maxOutlets maxStaff maxProducts customPlanDetails pendingCustomPlan agentId")
+      .populate("planId")
+      .populate("agentId", "name email phone")
+      .lean();
     if (!business) return errorResponse({
       res: res,
       statusCode: 404,
@@ -270,6 +274,12 @@ async function getSubscriptionStatus(req, res, next) {
         trialEndsAt: business.trialEndsAt,
         currentPeriodEnd: business.currentPeriodEnd,
         plan: business.planId,
+        agent: business.agentId ? {
+          _id: business.agentId._id,
+          name: business.agentId.name,
+          email: business.agentId.email,
+          phone: business.agentId.phone
+        } : null,
         maxOutlets: business.maxOutlets,
         maxStaff: business.maxStaff,
         maxProducts: business.maxProducts,
@@ -393,11 +403,22 @@ async function requestGracePeriod(req, res, next) {
       return errorResponse({ res, statusCode: 400, message: "Grace period can only be requested from locked status" });
     }
 
+    const { notes, requestedDays } = req.body || {};
+    const days = Math.min(Math.max(Number(requestedDays) || 3, 1), 7);
+
     const gracePeriodEndsAt = new Date();
-    gracePeriodEndsAt.setDate(gracePeriodEndsAt.getDate() + 3);
+    gracePeriodEndsAt.setDate(gracePeriodEndsAt.getDate() + days);
 
     business.subscriptionStatus = "grace_period";
     business.gracePeriodEndsAt = gracePeriodEndsAt;
+    business.unlockRequest = {
+      requestedAt: new Date(),
+      notes: notes || "Requested grace extension to submit payment",
+      requestedDays: days,
+      status: "approved",
+      decidedAt: new Date(),
+      decisionNotes: "Self-serve grace period granted"
+    };
     await business.save();
 
     await AuditLog.create({
@@ -405,13 +426,47 @@ async function requestGracePeriod(req, res, next) {
       actorId: req.user?.userId,
       module: "billing",
       action: "grace_period_requested",
-      message: `Requested 3-day grace period until ${gracePeriodEndsAt.toLocaleDateString()}`,
+      message: `Requested ${days}-day grace period until ${gracePeriodEndsAt.toLocaleDateString()}${notes ? `. Notes: ${notes}` : ""}`,
       ip: req.ip
     });
 
+    // Notify Superadmins
+    try {
+      const { Notification } = await import("../models/Notification.js");
+      const { User } = await import("../models/User.js");
+      const superadmins = await User.find({ role: "superadmin" }).select("_id").lean();
+      if (superadmins.length > 0) {
+        const notifs = superadmins.map(sa => ({
+          businessId: business._id,
+          recipientId: sa._id,
+          type: "system",
+          title: "Account Grace Extension Activated",
+          body: `${business.name} activated a ${days}-day grace period until ${gracePeriodEndsAt.toLocaleDateString()}.${notes ? ` Note: ${notes}` : ""}`,
+          link: `/dashboard/admin/businesses?search=${encodeURIComponent(business.name)}`,
+          metadata: { businessId: business._id, action: "grace_period_activated" }
+        }));
+        await Notification.insertMany(notifs);
+      }
+    } catch (notifErr) {
+      console.error("Failed to create admin notification:", notifErr);
+    }
+
+    // Socket emit to admin
+    try {
+      const { getIO } = await import("../config/socket.js");
+      getIO().to("superadmin").emit("adminNotification", {
+        type: "grace_period_activated",
+        businessId: business._id,
+        businessName: business.name,
+        message: `${business.name} activated a ${days}-day grace period.`
+      });
+    } catch (e) {
+      // socket silent
+    }
+
     return successResponse({
       res,
-      message: "Grace period activated successfully for 3 days",
+      message: `Grace period activated successfully for ${days} days`,
       data: {
         subscriptionStatus: "grace_period",
         gracePeriodEndsAt

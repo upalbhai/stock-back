@@ -60,10 +60,12 @@ const businessSchema = new Schema(
     },
     pendingCustomPlan: {
       price: { type: Number },
-      currency: { type: String },
+      currency: { type: String, default: "INR" },
+      billingCycle: { type: String, enum: ["monthly", "yearly"], default: "monthly" },
       maxProducts: { type: Number },
       maxOutlets: { type: Number },
-      enabledFeatures: { type: [String] },
+      enabledFeatures: { type: [String], default: [] },
+      notes: { type: String },
       requestedAt: { type: Date },
       requestedBy: { type: Schema.Types.ObjectId, ref: "User" }
     },
@@ -71,6 +73,15 @@ const businessSchema = new Schema(
       status: { type: String, enum: ["approved", "rejected"] },
       reason: { type: String },
       date: { type: Date }
+    },
+    unlockRequest: {
+      requestedAt: { type: Date },
+      notes: { type: String },
+      requestedDays: { type: Number, default: 3 },
+      status: { type: String, enum: ["pending", "approved", "rejected"] },
+      decidedAt: { type: Date },
+      decidedBy: { type: Schema.Types.ObjectId, ref: "User" },
+      decisionNotes: { type: String }
     },
     reminders: {
       trialExpiringSentAt: { type: Date, default: null },

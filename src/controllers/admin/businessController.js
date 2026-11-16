@@ -284,21 +284,63 @@ async function adminSetBusinessStatus(req, res, next) {
 
 async function getPendingPlanRequests(req, res, next) {
   try {
-    const { search, page = 1, limit = 20 } = req.query;
-    const query = { pendingCustomPlan: { $exists: true, $ne: null } };
-    if (search) query.name = { $regex: search, $options: "i" };
+    const { search, page = 1, limit = 20, status = "pending" } = req.query;
+    
+    let baseQuery = {};
+    if (status === "history") {
+      baseQuery = {
+        lastPlanRequestStatus: { $exists: true, $ne: null },
+        pendingCustomPlan: { $exists: false }
+      };
+    } else if (status === "all") {
+      baseQuery = {
+        $or: [
+          { pendingCustomPlan: { $exists: true, $ne: null } },
+          { lastPlanRequestStatus: { $exists: true, $ne: null } }
+        ]
+      };
+    } else {
+      // Default: pending
+      baseQuery = { pendingCustomPlan: { $exists: true, $ne: null } };
+    }
+
+    if (search) {
+      baseQuery.name = { $regex: search, $options: "i" };
+    }
     
     const skip = (Number(page) - 1) * Number(limit);
-    const [businesses, total] = await Promise.all([
-      Business.find(query).populate("ownerId", "name phone email").populate("pendingCustomPlan.requestedBy", "name email").sort({ "pendingCustomPlan.requestedAt": -1 }).skip(skip).limit(Number(limit)).lean(),
-      Business.countDocuments(query)
+    const sortField =
+      status === "history"
+        ? { "lastPlanRequestStatus.date": -1, updatedAt: -1 }
+        : { "pendingCustomPlan.requestedAt": -1, updatedAt: -1 };
+
+    const [businesses, total, pendingCount, historyCount] = await Promise.all([
+      Business.find(baseQuery)
+        .populate("ownerId", "name phone email")
+        .populate("pendingCustomPlan.requestedBy", "name email")
+        .populate("agentId", "name email phone")
+        .sort(sortField)
+        .skip(skip)
+        .limit(Number(limit))
+        .lean(),
+      Business.countDocuments(baseQuery),
+      Business.countDocuments({ pendingCustomPlan: { $exists: true, $ne: null } }),
+      Business.countDocuments({
+        lastPlanRequestStatus: { $exists: true, $ne: null },
+        pendingCustomPlan: { $exists: false }
+      })
     ]);
     
     return successResponse({
       res: res,
       data: {
         requests: businesses,
-        total
+        total,
+        counts: {
+          pending: pendingCount,
+          history: historyCount,
+          all: pendingCount + historyCount
+        }
       }
     });
   } catch (error) {
@@ -308,7 +350,7 @@ async function getPendingPlanRequests(req, res, next) {
 
 async function approvePlanRequest(req, res, next) {
   try {
-    const { reason } = req.body;
+    const { reason, price: adminPrice, currency: adminCurrency, billingCycle: adminBillingCycle } = req.body;
     const business = await Business.findById(req.params.id);
     if (!business || !business.pendingCustomPlan) {
       return errorResponse({ res, statusCode: 404, message: "No pending plan request found" });
@@ -316,17 +358,26 @@ async function approvePlanRequest(req, res, next) {
 
     const { price, currency, maxProducts, maxOutlets, enabledFeatures, billingCycle } = business.pendingCustomPlan;
 
+    const resolvedPrice = adminPrice !== undefined && adminPrice !== null && adminPrice !== ""
+      ? Number(adminPrice)
+      : price !== undefined && price !== null
+      ? Number(price)
+      : business.customPlanDetails?.price || 0;
+
+    const resolvedCurrency = adminCurrency || currency || business.customPlanDetails?.currency || "INR";
+    const resolvedCycle = adminBillingCycle || billingCycle || business.customPlanDetails?.billingCycle || "monthly";
+
     business.customPlanDetails = {
-      price,
-      currency,
-      billingCycle: billingCycle === "yearly" ? "yearly" : "monthly",
-      maxProducts,
-      maxOutlets,
-      enabledFeatures
+      price: resolvedPrice,
+      currency: resolvedCurrency,
+      billingCycle: resolvedCycle === "yearly" ? "yearly" : "monthly",
+      maxProducts: maxProducts !== undefined ? maxProducts : business.maxProducts,
+      maxOutlets: maxOutlets !== undefined ? maxOutlets : business.maxOutlets,
+      enabledFeatures: Array.isArray(enabledFeatures) && enabledFeatures.length > 0 ? enabledFeatures : business.enabledFeatures
     };
-    if (maxProducts) business.maxProducts = maxProducts;
-    if (maxOutlets) business.maxOutlets = maxOutlets;
-    if (enabledFeatures) business.enabledFeatures = enabledFeatures;
+    if (maxProducts !== undefined) business.maxProducts = maxProducts;
+    if (maxOutlets !== undefined) business.maxOutlets = maxOutlets;
+    if (Array.isArray(enabledFeatures) && enabledFeatures.length > 0) business.enabledFeatures = enabledFeatures;
 
     business.pendingCustomPlan = undefined; // Clear it
     business.lastPlanRequestStatus = {
@@ -399,7 +450,14 @@ async function getAdminPlanRequestHistory(req, res, next) {
     const { AuditLog } = await import("../../models/AuditLog.js");
     const logs = await AuditLog.find({
       businessId: req.params.id,
-      action: { $in: ["agent_plan_change_requested", "admin_plan_change_approved", "admin_plan_change_rejected"] }
+      action: {
+        $in: [
+          "agent_plan_change_requested",
+          "direct_plan_change_requested",
+          "admin_plan_change_approved",
+          "admin_plan_change_rejected"
+        ]
+      }
     }).sort({ createdAt: -1 }).lean();
 
     return successResponse({ res, data: { logs } });
