@@ -8,6 +8,10 @@ dist
 uploads/
 seed/
 mongo_dump/
+*.dump
+*.bson
+*.pem
+*.key
 benchmark*.js
 # Seeders
 src/seeders/
