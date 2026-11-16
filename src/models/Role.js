@@ -18,7 +18,13 @@ const MODULES = [
   "units",
   "customers",
   "invoices",
-  "notifications"
+  "notifications",
+  "blogs",
+  "businesses",
+  "subscriptions",
+  "plans",
+  "payments",
+  "agents"
 ];
 const ACTIONS = [
   "create",
@@ -31,8 +37,24 @@ const ACTIONS = [
   "export",
   "approve",
   "void",
-  "collect"
+  "collect",
+  "publish",
+  "unpublish"
 ];
+const ADMIN_MODULES = [
+  "dashboard",
+  "businesses",
+  "outlets",
+  "subscriptions",
+  "plans",
+  "payments",
+  "agents",
+  "blogs",
+  "audit_logs",
+  "settings",
+  "users"
+];
+
 const permissionSchema = new Schema(
   {
     module: { type: String, required: true, enum: MODULES },
@@ -42,7 +64,12 @@ const permissionSchema = new Schema(
 );
 const roleSchema = new Schema(
   {
-    businessId: { type: Schema.Types.ObjectId, ref: "Business", required: true },
+    businessId: { type: Schema.Types.ObjectId, ref: "Business", required: false },
+    roleType: {
+      type: String,
+      enum: ["tenant", "platform"],
+      default: "tenant"
+    },
     name: { type: String, required: true, trim: true },
     description: { type: String },
     permissions: { type: [permissionSchema], default: [] },
@@ -61,11 +88,12 @@ const roleSchema = new Schema(
   },
   { timestamps: true }
 );
-roleSchema.index({ businessId: 1 });
+roleSchema.index({ businessId: 1, roleType: 1 });
 const Role = mongoose.models.Role || mongoose.model("Role", roleSchema);
 export {
   ACTIONS,
   MODULES,
+  ADMIN_MODULES,
   Role,
   permissionSchema
 };

@@ -11,15 +11,22 @@ import { applyPlanToBusiness } from "../utils/syncBusinessPlan.js";
 import mailer from "../utils/mailer.js";
 import { ManualPayment } from "../models/ManualPayment.js";
 import { resolveUtr } from "../utils/manualPaymentProof.js";
+import { getRazorpayConfig } from "../services/configService.js";
 
-function getRazorpayInstance() {
-  if (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET) {
-    throw new Error("Razorpay keys not configured");
+async function getRazorpayClient() {
+  const config = await getRazorpayConfig();
+  if (!config.keyId || !config.keySecret) {
+    throw new Error("Razorpay keys not configured in database settings");
   }
-  return new Razorpay({
-    key_id: process.env.RAZORPAY_KEY_ID,
-    key_secret: process.env.RAZORPAY_KEY_SECRET
-  });
+  return {
+    rzp: new Razorpay({
+      key_id: config.keyId,
+      key_secret: config.keySecret
+    }),
+    keyId: config.keyId,
+    keySecret: config.keySecret,
+    webhookSecret: config.webhookSecret
+  };
 }
 
 // 1. Create Order
@@ -69,7 +76,7 @@ async function createOrder(req, res, next) {
       });
     }
 
-    const rzp = getRazorpayInstance();
+    const { rzp, keyId } = await getRazorpayClient();
     
     const options = {
       amount: amount * 100, // amount in the smallest currency unit (paise for INR)
@@ -86,7 +93,7 @@ async function createOrder(req, res, next) {
         orderId: order.id,
         amount: order.amount,
         currency: order.currency,
-        keyId: process.env.RAZORPAY_KEY_ID
+        keyId
       }
     });
   } catch (error) {
@@ -106,9 +113,9 @@ async function verifyPayment(req, res, next) {
       message: "Business not found"
     });
 
-    const secret = process.env.RAZORPAY_KEY_SECRET;
+    const { keySecret } = await getRazorpayClient();
     const generated_signature = crypto
-      .createHmac("sha256", secret)
+      .createHmac("sha256", keySecret)
       .update(razorpay_order_id + "|" + razorpay_payment_id)
       .digest("hex");
 
@@ -219,7 +226,8 @@ async function verifyPayment(req, res, next) {
 // 3. Webhook handler (Optional - useful if doing actual recurring subscriptions via Razorpay Subscriptions API)
 async function webhookHandler(req, res, next) {
   try {
-    const secret = process.env.RAZORPAY_WEBHOOK_SECRET || process.env.RAZORPAY_KEY_SECRET;
+    const { keySecret, webhookSecret } = await getRazorpayClient();
+    const secret = webhookSecret || keySecret;
     const signature = req.headers["x-razorpay-signature"];
     
     // Validate webhook

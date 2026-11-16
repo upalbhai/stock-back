@@ -4,12 +4,14 @@ import { connectRedis, redisClient } from "./config/redis.js";
 import { initRateLimiter } from "./middlewares/rateLimiter/index.js";
 import { env } from "./config/env.js";
 import { logger } from "./utils/logger.js";
+import { ensureInitialSettings } from "./services/configService.js";
 
 import http from "http";
 import { initSocket } from "./config/socket.js";
 
 async function start() {
   await connectDatabase();
+  await ensureInitialSettings();
   await connectRedis();
   
   if (redisClient.isOpen) {

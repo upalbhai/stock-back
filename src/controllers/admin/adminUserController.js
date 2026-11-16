@@ -2,11 +2,12 @@ import { successResponse } from "../../utils/successResponse.js";
 import { errorResponse } from "../../utils/errorResponse.js";
 import bcrypt from "bcryptjs";
 import { User } from "../../models/User.js";
+import { Role } from "../../models/Role.js";
 import { AuditLog } from "../../models/AuditLog.js";
 
 async function createSystemAdmin(req, res, next) {
   try {
-    const { name, phone, email, customPermissions, password } = req.body;
+    const { name, phone, email, roleId, customPermissions, password } = req.body;
 
     if (!name || !email || !password) {
       return errorResponse({ res, statusCode: 400, message: "Name, email, and password are required" });
@@ -17,6 +18,21 @@ async function createSystemAdmin(req, res, next) {
       return errorResponse({ res, statusCode: 409, message: "Email already exists" });
     }
 
+    let finalPermissions = customPermissions || [];
+    let assignedRoleId = null;
+    let assignedRoleName = null;
+
+    if (roleId) {
+      const roleDoc = await Role.findOne({ _id: roleId, roleType: "platform" });
+      if (roleDoc) {
+        assignedRoleId = roleDoc._id;
+        assignedRoleName = roleDoc.name;
+        if ((!finalPermissions || finalPermissions.length === 0) && roleDoc.permissions?.length) {
+          finalPermissions = roleDoc.permissions;
+        }
+      }
+    }
+
     const passwordHash = await bcrypt.hash(password, 10);
 
     const user = await User.create({
@@ -24,7 +40,8 @@ async function createSystemAdmin(req, res, next) {
       phone,
       email: email.toLowerCase(),
       role: "superadmin",
-      customPermissions: customPermissions || [],
+      roleId: assignedRoleId,
+      customPermissions: finalPermissions,
       passwordHash,
       emailVerified: true 
     });
@@ -33,7 +50,10 @@ async function createSystemAdmin(req, res, next) {
       actorId: req.user?.userId,
       module: "admin",
       action: "create_system_admin",
-      message: `Created new system admin: ${user.email}`,
+      targetType: "User",
+      targetId: user._id,
+      targetName: user.name,
+      message: `Created new system admin: ${user.email} (Role: ${assignedRoleName || "Custom Scoped"})`,
       ip: req.ip
     });
 
@@ -73,6 +93,15 @@ async function adminChangeUserPassword(req, res, next) {
     
     const user = await User.findById(req.params.id);
     if (!user) return errorResponse({ res, statusCode: 404, message: "User not found" });
+
+    // Safeguard: A sub-admin cannot change the Primary Superadmin password
+    if (user.isPrimaryAdmin && req.user?.userId !== String(user._id)) {
+      return errorResponse({
+        res,
+        statusCode: 403,
+        message: "Access Denied: The Primary Root Administrator password can only be changed directly by that administrator."
+      });
+    }
 
     user.passwordHash = await bcrypt.hash(newPassword, 10);
     await user.save();

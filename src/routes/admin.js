@@ -35,11 +35,18 @@ import {
   adminChangeUserPassword
 } from "../controllers/admin/adminUserController.js";
 import {
+  listAdminRoles,
+  createAdminRole,
+  updateAdminRole,
+  deleteAdminRole
+} from "../controllers/admin/adminRoleController.js";
+import {
   adminPurgeUserData
 } from "../controllers/admin/adminPurgeController.js";
 import {
   getSettings,
-  updateSettings
+  updateSettings,
+  testEmailDispatch
 } from "../controllers/admin/settingsController.js";
 import {
   getAgents,
@@ -128,9 +135,16 @@ adminRouter.post("/users/:id/change-password", rateLimit("admin"), validate(idPa
 adminRouter.delete("/users/:userId/purge", rateLimit("admin"), adminPurgeUserData);
 adminRouter.get("/otp-logs", rateLimit("admin"), getOtpLogs);
 
+// Platform Admin Roles & RBAC
+adminRouter.get("/roles", rateLimit("admin"), listAdminRoles);
+adminRouter.post("/roles", rateLimit("admin"), createAdminRole);
+adminRouter.patch("/roles/:id", rateLimit("admin"), validate(idParamSchema, "params"), updateAdminRole);
+adminRouter.delete("/roles/:id", rateLimit("admin"), validate(idParamSchema, "params"), deleteAdminRole);
+
 // Global Platform Settings
 adminRouter.get("/settings", rateLimit("admin"), getSettings);
 adminRouter.put("/settings", rateLimit("admin"), updateSettings);
+adminRouter.post("/settings/test-email", rateLimit("admin"), testEmailDispatch);
 
 // Agents Management
 adminRouter.get("/agents", rateLimit("admin"), getAgents);

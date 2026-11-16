@@ -15,6 +15,7 @@ const userSchema = new Schema(
       enum: ["superadmin", "owner", "manager", "staff", "agent"],
       default: "staff"
     },
+    isPrimaryAdmin: { type: Boolean, default: false },
     customPermissions: { type: [permissionSchema], default: [] },
     preferredLoginMethod: {
       type: String,
