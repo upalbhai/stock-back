@@ -1,7 +1,10 @@
+import mongoose from "mongoose";
 import { successResponse } from "../utils/successResponse.js";
 import { errorResponse } from "../utils/errorResponse.js";
 import { Category } from "../models/Category.js";
+import { Product } from "../models/Product.js";
 import { AuditLog } from "../models/AuditLog.js";
+import { emitToBusiness } from "../utils/socketEmitter.js";
 function makeSlug(name, businessId) {
   const base = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 32);
   return `${base}-${businessId.slice(-4)}`;
@@ -26,14 +29,23 @@ async function listCategories(req, res, next) {
       const numPage = Math.max(Number(page) || 1, 1);
       const skip = (numPage - 1) * numLimit;
 
-      const [total, categories] = await Promise.all([
+      const [total, categories, productCounts] = await Promise.all([
         Category.countDocuments(query),
         Category.find(query)
           .sort({ parentId: 1, sortOrder: 1, name: 1 })
           .skip(skip)
           .limit(numLimit)
-          .lean()
+          .lean(),
+        Product.aggregate([
+          { $match: { businessId: new mongoose.Types.ObjectId(businessId), isActive: { $ne: false } } },
+          { $group: { _id: "$categoryId", count: { $sum: 1 } } }
+        ])
       ]);
+
+      const countMap = new Map(productCounts.map((p) => [p._id?.toString(), p.count]));
+      for (const cat of categories) {
+        cat.productCount = countMap.get(cat._id.toString()) || 0;
+      }
 
       const meta = {
         pagination: {
@@ -53,9 +65,18 @@ async function listCategories(req, res, next) {
     }
 
     // Otherwise return nested tree (no pagination)
-    const categories = await Category.find(query)
-      .sort({ sortOrder: 1, name: 1 })
-      .lean();
+    const [categories, productCounts] = await Promise.all([
+      Category.find(query).sort({ sortOrder: 1, name: 1 }).lean(),
+      Product.aggregate([
+        { $match: { businessId: new mongoose.Types.ObjectId(businessId), isActive: { $ne: false } } },
+        { $group: { _id: "$categoryId", count: { $sum: 1 } } }
+      ])
+    ]);
+
+    const countMap = new Map(productCounts.map((p) => [p._id?.toString(), p.count]));
+    for (const c of categories) {
+      c.productCount = countMap.get(c._id.toString()) || 0;
+    }
     
     // O(n) Tree Construction using Map (handles infinite nesting depth)
     const categoryMap = new Map();
@@ -118,6 +139,7 @@ async function createCategory(req, res, next) {
       message: `Category created: ${category.name}`,
       ip: req.ip
     });
+    emitToBusiness(businessId.toString(), "categories:updated", { categoryId: category._id });
     return successResponse({
       res: res,
       statusCode: 201,
@@ -151,6 +173,7 @@ async function updateCategory(req, res, next) {
       statusCode: 404,
       message: "Category not found"
     });
+    emitToBusiness(businessId.toString(), "categories:updated", { categoryId: category._id });
     return successResponse({
       res: res,
 
@@ -174,6 +197,7 @@ async function deleteCategory(req, res, next) {
     category.slug = `${category.slug}-deleted-${Date.now()}`;
     await category.save();
 
+    emitToBusiness(businessId.toString(), "categories:updated", { categoryId: category._id });
     return successResponse({
       res: res,
       message: "Category deactivated"

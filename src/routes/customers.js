@@ -4,6 +4,7 @@ import {
   createCustomer,
   getCustomer,
   updateCustomer,
+  deleteCustomer,
   getCustomerLedger,
   recordCustomerPayment
 } from "../controllers/customerController.js";
@@ -56,6 +57,15 @@ customerRouter.patch(
   validate(idParamSchema, "params"),
   validate(customerUpdateSchema),
   updateCustomer
+);
+customerRouter.delete(
+  "/:id",
+  requireAuth,
+  requireFeature("customers"),
+  requirePermission("customers", "delete"),
+  rateLimit("customerCrud"),
+  validate(idParamSchema, "params"),
+  deleteCustomer
 );
 customerRouter.get(
   "/:id/ledger",

@@ -1,7 +1,10 @@
+import mongoose from "mongoose";
 import { successResponse } from "../utils/successResponse.js";
 import { errorResponse } from "../utils/errorResponse.js";
 import { Brand } from "../models/Brand.js";
+import { Product } from "../models/Product.js";
 import { AuditLog } from "../models/AuditLog.js";
+import { emitToBusiness } from "../utils/socketEmitter.js";
 
 async function listBrands(req, res, next) {
   try {
@@ -14,18 +17,30 @@ async function listBrands(req, res, next) {
 
     const query = { businessId };
     
-    if (!includeInactive) {
-      query.isActive = true;
+    if (includeInactive !== "true" && includeInactive !== true) {
+      // By default include inactive or only active based on query
+      if (req.query.onlyActive === "true") {
+        query.isActive = true;
+      }
     }
 
     if (search) {
       query.name = { $regex: search, $options: "i" };
     }
 
-    const [total, brands] = await Promise.all([
+    const [total, brands, productCounts] = await Promise.all([
       Brand.countDocuments(query),
-      Brand.find(query).sort({ name: 1 }).skip(skip).limit(numLimit).lean()
+      Brand.find(query).sort({ name: 1 }).skip(skip).limit(numLimit).lean(),
+      Product.aggregate([
+        { $match: { businessId: new mongoose.Types.ObjectId(businessId), isActive: { $ne: false } } },
+        { $group: { _id: "$brandId", count: { $sum: 1 } } }
+      ])
     ]);
+
+    const countMap = new Map(productCounts.map((p) => [p._id?.toString(), p.count]));
+    for (const b of brands) {
+      b.productCount = countMap.get(b._id.toString()) || 0;
+    }
 
     return successResponse({
       res,
@@ -94,6 +109,8 @@ async function createBrand(req, res, next) {
       ip: req.ip
     });
 
+    emitToBusiness(businessId.toString(), "brands:updated", { brandId: brand._id });
+
     return successResponse({ res, statusCode: 201, data: { brand } });
   } catch (error) {
     return next(error);
@@ -135,6 +152,8 @@ async function updateBrand(req, res, next) {
       ip: req.ip
     });
 
+    emitToBusiness(businessId.toString(), "brands:updated", { brandId: brand._id });
+
     return successResponse({ res, data: { brand } });
   } catch (error) {
     return next(error);
@@ -161,6 +180,8 @@ async function deleteBrand(req, res, next) {
       message: `Brand deactivated: ${brand.name}`,
       ip: req.ip
     });
+
+    emitToBusiness(businessId.toString(), "brands:updated", { brandId: brand._id });
 
     return successResponse({ res, message: "Brand deactivated successfully" });
   } catch (error) {

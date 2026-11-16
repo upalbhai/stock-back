@@ -283,11 +283,54 @@ async function recordCustomerPayment(req, res, next) {
   }
 }
 
+async function deleteCustomer(req, res, next) {
+  try {
+    const { businessId, userId } = req.user;
+    const customer = await Customer.findOne({ _id: req.params.id, businessId });
+    if (!customer) {
+      return errorResponse({ res, statusCode: 404, message: "Customer not found" });
+    }
+
+    if (customer.outstandingBalance > 0) {
+      return errorResponse({
+        res,
+        statusCode: 400,
+        message: `Cannot delete customer with an outstanding balance of ₹${customer.outstandingBalance}. Settle all khata dues before deleting.`
+      });
+    }
+
+    // Soft delete to preserve historical receipts, invoices, and ledger records
+    customer.isActive = false;
+    await customer.save();
+
+    await AuditLog.create({
+      businessId,
+      actorId: userId,
+      module: "customers",
+      action: "delete",
+      targetType: "Customer",
+      targetId: customer._id,
+      targetName: customer.name,
+      message: `Customer deleted: ${customer.name}`,
+      ip: req.ip
+    });
+
+    return successResponse({
+      res,
+      message: "Customer deleted successfully",
+      data: { customerId: customer._id }
+    });
+  } catch (error) {
+    return next(error);
+  }
+}
+
 export {
   listCustomers,
   createCustomer,
   getCustomer,
   updateCustomer,
   getCustomerLedger,
-  recordCustomerPayment
+  recordCustomerPayment,
+  deleteCustomer
 };

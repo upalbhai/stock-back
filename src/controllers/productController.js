@@ -7,6 +7,7 @@ import { StockEntry } from "../models/StockEntry.js";
 import { AuditLog } from "../models/AuditLog.js";
 import { assertCanAddProduct } from "../utils/planLimits.js";
 import { withTransaction } from "../utils/transaction.js";
+import { emitToBusiness } from "../utils/socketEmitter.js";
 import mongoose from "mongoose";
 
 async function validatePackagingUnits(businessId, packagingUnits) {
@@ -623,6 +624,8 @@ async function createProduct(req, res, next) {
         businessId, actorId: req.user?.userId, module: "products", action: "create", targetType: "Product", targetId: product._id, targetName: product.name, message: `Product created: ${product.name}`, ip: req.ip
       }).save({ session });
       
+      emitToBusiness(businessId.toString(), "products:updated", { productId: product._id });
+      
       return successResponse({ res, statusCode: 201, data: { product: mergeInventoryAndProduct({ ...inventory.toObject(), productId: product.toObject() }) } });
     });
   } catch (error) {
@@ -688,6 +691,7 @@ async function updateProduct(req, res, next) {
        }
     }
 
+    emitToBusiness(businessId.toString(), "products:updated", { productId: product._id });
     return successResponse({ res, data: { product: inventory ? mergeInventoryAndProduct({ ...inventory, productId: product }) : product } });
   } catch (error) {
     return next(error);
@@ -705,6 +709,7 @@ async function deleteProduct(req, res, next) {
       await Product.findOneAndUpdate({ _id: req.params.id, businessId }, { $set: { isActive: false } });
     }
     
+    emitToBusiness(businessId.toString(), "products:updated", { productId: req.params.id });
     return successResponse({ res, message: "Product deactivated" });
   } catch (error) {
     return next(error);

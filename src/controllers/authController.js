@@ -852,7 +852,7 @@ async function createDefaultRoles(businessId, session = null) {
         { module: "products", actions: ["create", "read", "update"] },
         { module: "reports", actions: ["read", "export"] },
         { module: "expenses", actions: ["create", "read", "void"] },
-        { module: "customers", actions: ["create", "read", "update", "collect"] },
+        { module: "customers", actions: ["create", "read", "update", "delete", "collect"] },
         { module: "invoices", actions: ["create", "read", "print"] },
         { module: "dashboard", actions: ["read"] },
         { module: "categories", actions: ["read"] }
