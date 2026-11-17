@@ -255,7 +255,7 @@ async function createOrder(req, res, next) {
         return errorResponse({
           res,
           statusCode: 400,
-          message: "Business GSTIN not configured — add it in Settings"
+          message: "Business GSTIN not configured - add it in Settings"
         });
       }
       invoiceNumber = await getNextInvoiceNumber(businessId);
@@ -276,6 +276,32 @@ async function createOrder(req, res, next) {
       businessId
     }).session(session);
     const inventoryMap = new Map(inventoryDocs.map(inv => [inv.productId.toString(), inv]));
+
+    // --- Stock Availability Validation (Prevent Negative Stock) ---
+    const requestedStockMap = new Map();
+    for (const item of items) {
+      if (item.productId) {
+        const pIdStr = item.productId.toString();
+        const stockQty = getItemStockQty(item);
+        requestedStockMap.set(pIdStr, (requestedStockMap.get(pIdStr) || 0) + stockQty);
+      }
+    }
+
+    for (const [pIdStr, totalRequestedQty] of requestedStockMap.entries()) {
+      const product = productMap.get(pIdStr) || null;
+      const inventory = inventoryMap.get(pIdStr);
+      const availableQty = inventory ? inventory.onHandQty : 0;
+
+      if (totalRequestedQty > availableQty) {
+        const prodName = product?.name || "Selected item";
+        const unitLabel = product?.unitId?.abbreviation || product?.unit || "units";
+        return errorResponse({
+          res,
+          statusCode: 400,
+          message: `Insufficient stock for "${prodName}". Available: ${availableQty} ${unitLabel}, requested: ${totalRequestedQty} ${unitLabel}. Please adjust quantities.`
+        });
+      }
+    }
 
     const inventoryBulkOps = [];
     const stockEntries = [];
@@ -302,7 +328,7 @@ async function createOrder(req, res, next) {
           
           inventoryBulkOps.push({
             updateOne: {
-              filter: { _id: inventory._id },
+              filter: { _id: inventory._id, onHandQty: { $gte: stockQty } },
               update: { $inc: { onHandQty: -stockQty } }
             }
           });
@@ -422,7 +448,7 @@ async function createOrder(req, res, next) {
         targetType: "Order",
         targetId: orderId,
         targetName: orderNumber,
-        message: `Order ${orderNumber} created — ${total}`,
+        message: `Order ${orderNumber} created: ${total}`,
         ip: req.ip
       }).save({ session })
     );
