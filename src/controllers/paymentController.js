@@ -192,6 +192,39 @@ async function verifyPayment(req, res, next) {
       await business.save();
     }
 
+    // Calculate agent commission if business was referred by an agent
+    if (business.agentId) {
+      try {
+        const { AgentProfile } = await import("../models/AgentProfile.js");
+        const { AgentTransaction } = await import("../models/AgentTransaction.js");
+        const profile = await AgentProfile.findOne({ userId: business.agentId });
+        if (profile && (profile.commissionPercentage || 0) > 0) {
+          const commission = (amount * profile.commissionPercentage) / 100;
+          let wallet = profile.wallets.find((w) => w.currency === currency);
+          if (!wallet) {
+            profile.wallets.push({ currency, totalSales: 0, pending: 0, paid: 0 });
+            wallet = profile.wallets[profile.wallets.length - 1];
+          }
+          wallet.pending += commission;
+          wallet.totalSales += amount;
+          profile.totalSales += amount;
+          await profile.save();
+
+          await AgentTransaction.create({
+            agentId: business.agentId,
+            businessId: business._id,
+            type: "commission",
+            amount: commission,
+            currency,
+            referenceId: subscription._id.toString(),
+            description: `Commission earned (${profile.commissionPercentage}%) from online subscription ${planName} (${billingCycle}) for business ${business.name}`
+          });
+        }
+      } catch (agentErr) {
+        console.warn("Failed to credit agent commission:", agentErr.message);
+      }
+    }
+
     try {
       const { getIO } = await import("../config/socket.js");
       getIO().to(`business:${businessId.toString()}`).emit("subscriptionUpdated");

@@ -16,6 +16,7 @@ import { AuditLog } from "../models/AuditLog.js";
 import { EmailOtp } from "../models/EmailOtp.js";
 import { Session } from "../models/Session.js";
 import { SystemSetting } from "../models/SystemSetting.js";
+import { AgentProfile } from "../models/AgentProfile.js";
 import mailer from "../utils/mailer.js";
 import crypto from "crypto";
 import { parseDevice } from "../utils/parseDevice.js";
@@ -268,7 +269,38 @@ async function createLoginSession({ user, req, tokenPayload, session = null }) {
 async function register(req, res, next) {
   try {
     return await withTransaction(async (session) => {
-      const { name, email, password, phone, businessName, outletName, outletId } = req.body;
+      const { name, email, password, phone, businessName, outletName, outletId, agentCode } = req.body;
+
+      // Validate agent referral code if provided
+      let referringAgent = null;
+      if (agentCode && typeof agentCode === "string" && agentCode.trim()) {
+        const cleanCode = agentCode.trim();
+        const profile = await AgentProfile.findOne({
+          agentCode: { $regex: new RegExp(`^${cleanCode}$`, "i") }
+        }).session(session);
+
+        if (!profile) {
+          return errorResponse({
+            res,
+            statusCode: 400,
+            message: "Invalid referral code. Please check the code or leave it blank."
+          });
+        }
+
+        referringAgent = await User.findOne({
+          _id: profile.userId,
+          role: "agent",
+          isActive: true
+        }).session(session);
+
+        if (!referringAgent) {
+          return errorResponse({
+            res,
+            statusCode: 400,
+            message: "This referral code belongs to an inactive agent account."
+          });
+        }
+      }
 
       // Fetch settings and check existing user in parallel
       const [settingsDoc, existingEmail, existingPhone] = await Promise.all([
@@ -357,6 +389,9 @@ async function register(req, res, next) {
         code: bCode,
         slug: bCode,
         ownerId: userId,
+        agentId: referringAgent ? referringAgent._id : undefined,
+        email: email.toLowerCase(),
+        phone: phone || undefined,
         plan: "free",
         planType: "retail",
         businessProfile: "retail",
@@ -425,7 +460,9 @@ async function register(req, res, next) {
       actorRole: user.role,
       module: "auth",
       action: "register",
-      message: `New owner registered with trial: ${user.name}`,
+      message: referringAgent
+        ? `New owner registered with trial (referred by agent ${referringAgent.name} / ${agentCode.trim()}): ${user.name}`
+        : `New owner registered with trial: ${user.name}`,
       ip: req.ip,
       userAgent: req.headers["user-agent"]
     }).save().catch((e) => console.warn("AuditLog save error", e.message));

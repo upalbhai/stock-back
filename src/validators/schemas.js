@@ -11,7 +11,11 @@ export const registerSchema = z.object({
   phone: phoneSchema.optional(),
   businessName: z.string().trim().min(2, "Business name is required"),
   outletName: z.string().trim().min(2).optional(),
-  outletId: z.string().trim().optional()
+  outletId: z.string().trim().optional(),
+  agentCode: z.string().trim().optional(),
+  country: z.string().trim().optional(),
+  timezone: z.string().trim().optional(),
+  currency: z.string().trim().optional()
 });
 
 // Email + Password login

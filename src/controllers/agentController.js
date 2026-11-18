@@ -98,15 +98,22 @@ export async function getAgentClients(req, res, next) {
     const totalPages = Math.ceil(total / limit) || 1;
 
     const clients = await Business.find(query)
-      .select("name email phone status subscriptionStatus customPlanDetails pendingCustomPlan lastPlanRequestStatus createdAt")
+      .select("name email phone status subscriptionStatus customPlanDetails pendingCustomPlan lastPlanRequestStatus createdAt ownerId")
+      .populate("ownerId", "name email phone")
       .sort({ createdAt: -1 })
       .skip((page - 1) * limit)
       .limit(limit)
       .lean();
 
+    const formattedClients = clients.map((c) => ({
+      ...c,
+      email: c.email || c.ownerId?.email || "",
+      phone: c.phone || c.ownerId?.phone || ""
+    }));
+
     return successResponse({
       res,
-      data: { clients },
+      data: { clients: formattedClients },
       meta: {
         pagination: {
           page,
