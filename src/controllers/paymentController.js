@@ -259,7 +259,7 @@ async function getSubscriptionStatus(req, res, next) {
     });
     
     const business = await Business.findById(businessId)
-      .select("subscriptionStatus trialEndsAt currentPeriodEnd planId maxOutlets maxStaff maxProducts customPlanDetails pendingCustomPlan agentId")
+      .select("subscriptionStatus trialEndsAt currentPeriodEnd planId maxOutlets maxStaff maxProducts customPlanDetails pendingCustomPlan agentId currency country isInternational")
       .populate("planId")
       .populate("agentId", "name email phone")
       .lean();
@@ -281,6 +281,9 @@ async function getSubscriptionStatus(req, res, next) {
         subscriptionStatus: business.subscriptionStatus,
         trialEndsAt: business.trialEndsAt,
         currentPeriodEnd: business.currentPeriodEnd,
+        currency: business.currency || "INR",
+        country: business.country || "IN",
+        isInternational: Boolean(business.isInternational),
         plan: business.planId,
         agent: business.agentId ? {
           _id: business.agentId._id,

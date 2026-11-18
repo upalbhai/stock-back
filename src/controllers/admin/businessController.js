@@ -295,13 +295,13 @@ async function getPendingPlanRequests(req, res, next) {
     } else if (status === "all") {
       baseQuery = {
         $or: [
-          { pendingCustomPlan: { $exists: true, $ne: null } },
+          { pendingCustomPlan: { $exists: true, $ne: null }, "pendingCustomPlan.requestedAt": { $exists: true } },
           { lastPlanRequestStatus: { $exists: true, $ne: null } }
         ]
       };
     } else {
-      // Default: pending
-      baseQuery = { pendingCustomPlan: { $exists: true, $ne: null } };
+      // Default: pending with valid requestedAt
+      baseQuery = { pendingCustomPlan: { $exists: true, $ne: null }, "pendingCustomPlan.requestedAt": { $exists: true } };
     }
 
     if (search) {
@@ -324,7 +324,7 @@ async function getPendingPlanRequests(req, res, next) {
         .limit(Number(limit))
         .lean(),
       Business.countDocuments(baseQuery),
-      Business.countDocuments({ pendingCustomPlan: { $exists: true, $ne: null } }),
+      Business.countDocuments({ pendingCustomPlan: { $exists: true, $ne: null }, "pendingCustomPlan.requestedAt": { $exists: true } }),
       Business.countDocuments({
         lastPlanRequestStatus: { $exists: true, $ne: null },
         pendingCustomPlan: { $exists: false }
@@ -378,6 +378,15 @@ async function approvePlanRequest(req, res, next) {
     if (maxProducts !== undefined) business.maxProducts = maxProducts;
     if (maxOutlets !== undefined) business.maxOutlets = maxOutlets;
     if (Array.isArray(enabledFeatures) && enabledFeatures.length > 0) business.enabledFeatures = enabledFeatures;
+    if (resolvedCurrency) business.currency = resolvedCurrency;
+
+    // If approved with price = 0, auto-activate immediately (no payment gateway needed)
+    if (resolvedPrice === 0) {
+      business.subscriptionStatus = "active";
+      const now = new Date();
+      business.currentPeriodStart = now;
+      business.currentPeriodEnd = new Date(now.getTime() + 365 * 24 * 60 * 60 * 1000);
+    }
 
     business.pendingCustomPlan = undefined; // Clear it
     business.lastPlanRequestStatus = {

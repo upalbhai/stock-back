@@ -30,6 +30,11 @@ const businessSchema = new Schema(
     isActive: { type: Boolean, default: true },
     timezone: { type: String, default: "Asia/Kolkata" },
     currency: { type: String, default: "INR" },
+    country: { type: String, default: "IN" },
+    countryCode: { type: String, default: "IN" },
+    detectedCountry: { type: String },
+    signupIp: { type: String },
+    isInternational: { type: Boolean, default: false },
     logo: { type: String },
     address: { type: String },
     gstNumber: { type: String },
@@ -51,23 +56,29 @@ const businessSchema = new Schema(
     },
     enabledFeatures: { type: [String], default: [] },
     customPlanDetails: {
-      price: { type: Number },
-      currency: { type: String, default: "INR" },
-      billingCycle: { type: String, enum: ["monthly", "yearly"], default: "monthly" },
-      maxProducts: { type: Number },
-      maxOutlets: { type: Number },
-      enabledFeatures: { type: [String] }
+      type: new Schema({
+        price: { type: Number },
+        currency: { type: String, default: "INR" },
+        billingCycle: { type: String, enum: ["monthly", "yearly"], default: "monthly" },
+        maxProducts: { type: Number },
+        maxOutlets: { type: Number },
+        enabledFeatures: { type: [String], default: [] }
+      }, { _id: false }),
+      default: undefined
     },
     pendingCustomPlan: {
-      price: { type: Number },
-      currency: { type: String, default: "INR" },
-      billingCycle: { type: String, enum: ["monthly", "yearly"], default: "monthly" },
-      maxProducts: { type: Number },
-      maxOutlets: { type: Number },
-      enabledFeatures: { type: [String], default: [] },
-      notes: { type: String },
-      requestedAt: { type: Date },
-      requestedBy: { type: Schema.Types.ObjectId, ref: "User" }
+      type: new Schema({
+        price: { type: Number },
+        currency: { type: String, default: "INR" },
+        billingCycle: { type: String, enum: ["monthly", "yearly"], default: "monthly" },
+        maxProducts: { type: Number },
+        maxOutlets: { type: Number },
+        enabledFeatures: { type: [String], default: [] },
+        notes: { type: String },
+        requestedAt: { type: Date },
+        requestedBy: { type: Schema.Types.ObjectId, ref: "User" }
+      }, { _id: false }),
+      default: undefined
     },
     lastPlanRequestStatus: {
       status: { type: String, enum: ["approved", "rejected"] },

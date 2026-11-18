@@ -252,9 +252,18 @@ export const uploadBlogImage = async (req, res, next) => {
     if (!req.file) {
       return errorResponse({ res, statusCode: 400, message: "No image provided" });
     }
-    const url = `/uploads/blog/${req.file.filename}`;
-    const baseUrl = `${req.protocol}://${req.get('host')}`;
-    return successResponse({ res, statusCode: 201, data: { url: baseUrl + url } });
+    const relativeUrl = `/uploads/blog/${req.file.filename}`;
+    const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'https';
+    const baseUrl = `${protocol}://${req.get('host')}`;
+    return successResponse({
+      res,
+      statusCode: 201,
+      data: {
+        url: relativeUrl,
+        relativeUrl,
+        absoluteUrl: `${baseUrl}${relativeUrl}`
+      }
+    });
   } catch (error) {
     next(error);
   }

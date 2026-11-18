@@ -326,6 +326,32 @@ async function register(req, res, next) {
       const trialDays = settings.defaultTrialDays || 14;
       const trialEnd = new Date(now.getTime() + trialDays * 24 * 60 * 60 * 1000);
 
+      const rawCountry = req.body.country || req.headers['cf-ipcountry'] || undefined;
+      const rawTimezone = req.body.timezone || undefined;
+      const clientIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip || undefined;
+      
+      // Determine if international based on phone or country/timezone
+      let detectedCountry = rawCountry ? rawCountry.toUpperCase() : "IN";
+      if (!rawCountry && phone) {
+        const cleanPhone = phone.trim();
+        if (cleanPhone.startsWith("+1")) detectedCountry = "US";
+        else if (cleanPhone.startsWith("+971")) detectedCountry = "AE";
+        else if (cleanPhone.startsWith("+44")) detectedCountry = "GB";
+        else if (cleanPhone.startsWith("+61")) detectedCountry = "AU";
+        else if (cleanPhone.startsWith("+65")) detectedCountry = "SG";
+        else if (cleanPhone.startsWith("+91")) detectedCountry = "IN";
+      } else if (!rawCountry && rawTimezone) {
+        if (!rawTimezone.includes("Kolkata") && !rawTimezone.includes("Calcutta")) {
+          if (rawTimezone.includes("Dubai") || rawTimezone.includes("Muscat")) detectedCountry = "AE";
+          else if (rawTimezone.includes("America") || rawTimezone.includes("New_York") || rawTimezone.includes("Los_Angeles") || rawTimezone.includes("Chicago")) detectedCountry = "US";
+          else if (rawTimezone.includes("London")) detectedCountry = "GB";
+          else if (rawTimezone.includes("Europe")) detectedCountry = "EU";
+        }
+      }
+
+      const isInternational = detectedCountry !== "IN";
+      const initialCurrency = req.body.currency || (isInternational ? (detectedCountry === "AE" ? "AED" : detectedCountry === "GB" ? "GBP" : "USD") : "INR");
+
       business = await new Business({
         name: businessName,
         code: bCode,
@@ -343,7 +369,16 @@ async function register(req, res, next) {
         subscriptionStatus: "trial",
         trialStartedAt: now,
         trialEndsAt: trialEnd,
-        approvedAt: now
+        approvedAt: now,
+        country: detectedCountry,
+        countryCode: detectedCountry,
+        detectedCountry: detectedCountry,
+        signupIp: clientIp,
+        isInternational: isInternational,
+        currency: initialCurrency,
+        timezone: rawTimezone || (detectedCountry === "IN" ? "Asia/Kolkata" : "UTC"),
+        customPlanDetails: undefined,
+        pendingCustomPlan: undefined
       }).save({ session });
 
       const outlet = await new Outlet({

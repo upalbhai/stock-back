@@ -40,6 +40,7 @@ function isAllowedOrigin(origin) {
 }
 function createApp() {
   const app = express();
+  app.set("trust proxy", 1);
   app.use(helmet({
     crossOriginResourcePolicy: { policy: "cross-origin" }
   }));
@@ -75,11 +76,12 @@ function createApp() {
   app.use("/api/payments", paymentRouter);
   app.use("/api/features", featureRouter);
   app.use("/api/blogs", blogRouter);
+  // Business settings and custom plan requests must remain accessible even if subscription is locked
+  app.use("/api/businesses", requireAuth, loadBusinessContext, businessRouter);
 
   const withSub = [requireAuth, requireActiveSubscription, loadBusinessContext];
 
-  // Subscription-protected routes
-  app.use("/api/businesses", ...withSub, businessRouter);
+  // Subscription-protected operational routes
   app.use("/api/outlets", ...withSub, outletRouter);
   app.use("/api/categories", ...withSub, categoryRouter);
   app.use("/api/brands", ...withSub, brandRouter);

@@ -13,6 +13,15 @@ async function requireActiveSubscription(req, res, next) {
       return next();
     }
 
+    // Always allow plan requests and business profile retrieval even when subscription is locked
+    if (
+      req.originalUrl?.includes("/businesses/mine") ||
+      req.originalUrl?.includes("/request-plan") ||
+      req.path?.includes("/request-plan")
+    ) {
+      return next();
+    }
+
     const businessId = req.user?.businessId;
     if (!businessId) {
       return res.status(403).json({ message: "No business association found" });

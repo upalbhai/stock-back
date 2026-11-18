@@ -67,7 +67,7 @@ async function updateMyBusiness(req, res, next) {
 
 async function requestCustomPlanDirect(req, res, next) {
   try {
-    const { maxOutlets, maxProducts, features, notes } = req.body;
+    const { maxOutlets, maxProducts, features, notes, currency, billingCycle } = req.body;
     
     const query = req.user?.role === "superadmin" && req.query.businessId
       ? { _id: req.query.businessId }
@@ -78,14 +78,22 @@ async function requestCustomPlanDirect(req, res, next) {
       return errorResponse({ res, statusCode: 404, message: "Business not found" });
     }
 
+    const requestedCurrency = currency || business.currency || (business.isInternational ? "USD" : "INR");
+
     business.pendingCustomPlan = {
       maxOutlets: Number(maxOutlets) || 1,
       maxProducts: Number(maxProducts) || 0, // 0 usually means unlimited or to be decided
       enabledFeatures: features || [],
+      currency: requestedCurrency,
+      billingCycle: billingCycle === "yearly" ? "yearly" : "monthly",
       requestedBy: req.user?.userId,
       requestedAt: new Date(),
       notes: notes || "Direct signup plan request"
     };
+
+    if (currency && business.currency !== currency) {
+      business.currency = currency;
+    }
 
     await business.save();
 
@@ -94,9 +102,16 @@ async function requestCustomPlanDirect(req, res, next) {
       actorId: req.user?.userId,
       module: "business",
       action: "direct_plan_change_requested",
-      message: `Business owner requested a custom plan. Max Outlets: ${business.pendingCustomPlan.maxOutlets}, Features: ${business.pendingCustomPlan.enabledFeatures.join(", ")}`,
+      message: `Business owner requested a custom plan. Currency: ${requestedCurrency}, Max Outlets: ${business.pendingCustomPlan.maxOutlets}, Features: ${business.pendingCustomPlan.enabledFeatures.join(", ")}`,
       ip: req.ip
     });
+
+    try {
+      const { getIO } = await import("../config/socket.js");
+      getIO().to(`business:${business._id.toString()}`).emit("subscriptionUpdated");
+    } catch (err) {
+      // socket non-blocking
+    }
 
     return successResponse({ res, message: "Custom plan request submitted successfully." });
   } catch (error) {
