@@ -449,6 +449,28 @@ function formatLedgerRow(entry) {
 }
 
 const inventoryValuationCache = new Map();
+const valuationPromises = new Map();
+const ledgerSummaryCache = new Map();
+const LEDGER_SUMMARY_TTL = 60 * 1000; // 60 seconds
+
+function clearProfitLedgerCache(businessId) {
+  if (!businessId) {
+    ledgerSummaryCache.clear();
+    inventoryValuationCache.clear();
+    return;
+  }
+  const prefix = String(businessId);
+  for (const key of ledgerSummaryCache.keys()) {
+    if (key.startsWith(prefix)) {
+      ledgerSummaryCache.delete(key);
+    }
+  }
+  for (const key of inventoryValuationCache.keys()) {
+    if (key.startsWith(prefix)) {
+      inventoryValuationCache.delete(key);
+    }
+  }
+}
 
 async function getInventoryValuation(businessId, outletId) {
   const cacheKey = `${businessId}-${outletId || "all"}`;
@@ -457,48 +479,61 @@ async function getInventoryValuation(businessId, outletId) {
     return cached.data;
   }
 
-  const match = { businessId: new mongoose.Types.ObjectId(businessId), isActive: true };
-  if (outletId) {
-    match.outletId = new mongoose.Types.ObjectId(outletId);
+  if (valuationPromises.has(cacheKey)) {
+    return valuationPromises.get(cacheKey);
   }
 
-  const aggResult = await Inventory.aggregate([
-    { $match: match },
-    {
-      $lookup: {
-        from: "products",
-        localField: "productId",
-        foreignField: "_id",
-        as: "product"
+  const promise = (async () => {
+    try {
+      const match = { businessId: new mongoose.Types.ObjectId(businessId), isActive: true };
+      if (outletId) {
+        match.outletId = new mongoose.Types.ObjectId(outletId);
       }
-    },
-    { $unwind: { path: "$product", preserveNullAndEmptyArrays: false } },
-    {
-      $group: {
-        _id: null,
-        onHandCostValue: {
-          $sum: {
-            $multiply: [
-              { $ifNull: ["$onHandQty", 0] },
-              { $ifNull: ["$product.costPrice", 0] }
-            ]
+
+      const aggResult = await Inventory.aggregate([
+        { $match: match },
+        {
+          $lookup: {
+            from: "products",
+            localField: "productId",
+            foreignField: "_id",
+            as: "product"
           }
         },
-        onHandSellValue: {
-          $sum: {
-            $multiply: [
-              { $ifNull: ["$onHandQty", 0] },
-              { $ifNull: ["$product.price", 0] }
-            ]
+        { $unwind: { path: "$product", preserveNullAndEmptyArrays: false } },
+        {
+          $group: {
+            _id: null,
+            onHandCostValue: {
+              $sum: {
+                $multiply: [
+                  { $ifNull: ["$onHandQty", 0] },
+                  { $ifNull: ["$product.costPrice", 0] }
+                ]
+              }
+            },
+            onHandSellValue: {
+              $sum: {
+                $multiply: [
+                  { $ifNull: ["$onHandQty", 0] },
+                  { $ifNull: ["$product.price", 0] }
+                ]
+              }
+            }
           }
         }
-      }
-    }
-  ]);
+      ]);
 
-  const result = aggResult[0] || { onHandCostValue: 0, onHandSellValue: 0 };
-  inventoryValuationCache.set(cacheKey, { timestamp: Date.now(), data: result });
-  return result;
+      const result = aggResult[0] || { onHandCostValue: 0, onHandSellValue: 0 };
+      inventoryValuationCache.set(cacheKey, { timestamp: Date.now(), data: result });
+      return result;
+    } finally {
+      valuationPromises.delete(cacheKey);
+    }
+  })();
+
+  valuationPromises.set(cacheKey, promise);
+  return promise;
 }
 
 async function getProfitLedger(req, res, next) {
@@ -512,119 +547,156 @@ async function getProfitLedger(req, res, next) {
 
     const term = String(search || "").trim();
     if (term) {
+      const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       const matchingProducts = await Product.find({
-        businessId,
+        businessId: new mongoose.Types.ObjectId(businessId),
         $or: [
-          { name: { $regex: term, $options: "i" } },
-          { sku: { $regex: term, $options: "i" } }
+          { name: { $regex: escaped, $options: "i" } },
+          { sku: { $regex: escaped, $options: "i" } }
         ]
       }).select("_id").lean();
       const productIds = matchingProducts.map((p) => p._id);
       const orConditions = [
-        { note: { $regex: term, $options: "i" } },
-        { lossReason: { $regex: term, $options: "i" } },
-        { type: { $regex: term, $options: "i" } }
+        { note: { $regex: escaped, $options: "i" } },
+        { lossReason: { $regex: escaped, $options: "i" } },
+        { type: { $regex: escaped, $options: "i" } }
       ];
       if (productIds.length) orConditions.unshift({ productId: { $in: productIds } });
       query.$or = orConditions;
     }
 
-    const skip = (Number(page) - 1) * Number(limit);
+    const numLimit = Math.min(100, Math.max(1, Number(limit) || 10));
+    const numPage = Math.max(1, Number(page) || 1);
+    const skip = (numPage - 1) * numLimit;
 
-    const orderQuery = { businessId, status: "completed" };
-    if (outletId) orderQuery.outletId = outletId;
-    if (createdAt) orderQuery.createdAt = createdAt;
+    const summaryCacheKey = `${businessId}:${outletId || "all"}:${from || ""}:${to || ""}:${term || ""}`;
+    const cachedEntry = ledgerSummaryCache.get(summaryCacheKey);
+    const hasValidSummary = cachedEntry && Date.now() - cachedEntry.timestamp < LEDGER_SUMMARY_TTL;
 
-    const [entries, summaryAgg, valuation, ordersCount] = await Promise.all([
-      StockEntry.find(query)
+    let entries;
+    let summary;
+    let total;
+
+    if (hasValidSummary && numPage > 1) {
+      // Fast path for pagination: reuse cached summary & total count, only fetch entries page
+      summary = cachedEntry.summary;
+      total = cachedEntry.total;
+      entries = await StockEntry.find(query)
         .sort({ createdAt: -1 })
         .skip(skip)
-        .limit(Number(limit))
-        .populate("productId", "name unit price costPrice onHandQty packagingUnits")
+        .limit(numLimit)
+        .populate("productId", "name unit")
         .populate("createdBy", "name")
-        .lean(),
-      StockEntry.aggregate([
-        { $match: query },
-        {
-          $group: {
-            _id: null,
-            totalDocuments: { $sum: 1 },
-            stockInvested: { $sum: { $cond: [{ $gt: ["$qty", 0] }, { $ifNull: ["$costValue", 0] }, 0] } },
-            potentialMargin: { $sum: { $cond: [{ $gt: ["$qty", 0] }, { $ifNull: ["$expectedProfit", 0] }, 0] } },
-            realizedRevenue: { $sum: { $ifNull: ["$realizedRevenue", 0] } },
-            realizedCost: { $sum: { $ifNull: ["$realizedCost", 0] } },
-            spoilageLoss: {
-              $sum: {
-                $cond: [
-                  { $in: ["$lossReason", ["spoilage", "expiry", "damage", "other"]] },
-                  { $ifNull: ["$costLoss", 0] },
-                  0
-                ]
-              }
-            },
-            returnLoss: {
-              $sum: {
-                $cond: [
-                  { $eq: ["$lossReason", "customer_return_spoiled"] },
-                  { $ifNull: ["$costLoss", 0] },
-                  0
-                ]
-              }
-            },
-            replacementCost: {
-              $sum: {
-                $cond: [
-                  { $eq: ["$lossReason", "owner_replacement"] },
-                  { $ifNull: ["$costLoss", 0] },
-                  0
-                ]
-              }
-            },
-            totalLoss: { $sum: { $ifNull: ["$costLoss", 0] } }
+        .lean();
+    } else {
+      const orderQuery = {
+        businessId: new mongoose.Types.ObjectId(businessId),
+        status: "completed"
+      };
+      if (outletId) orderQuery.outletId = new mongoose.Types.ObjectId(outletId);
+      if (createdAt) orderQuery.createdAt = createdAt;
+
+      const [entriesRes, summaryAgg, valuation, ordersCount] = await Promise.all([
+        StockEntry.find(query)
+          .sort({ createdAt: -1 })
+          .skip(skip)
+          .limit(numLimit)
+          .populate("productId", "name unit")
+          .populate("createdBy", "name")
+          .lean(),
+        StockEntry.aggregate([
+          { $match: query },
+          {
+            $group: {
+              _id: null,
+              totalDocuments: { $sum: 1 },
+              stockInvested: { $sum: { $cond: [{ $gt: ["$qty", 0] }, { $ifNull: ["$costValue", 0] }, 0] } },
+              potentialMargin: { $sum: { $cond: [{ $gt: ["$qty", 0] }, { $ifNull: ["$expectedProfit", 0] }, 0] } },
+              realizedRevenue: { $sum: { $ifNull: ["$realizedRevenue", 0] } },
+              realizedCost: { $sum: { $ifNull: ["$realizedCost", 0] } },
+              spoilageLoss: {
+                $sum: {
+                  $cond: [
+                    { $in: ["$lossReason", ["spoilage", "expiry", "damage", "other"]] },
+                    { $ifNull: ["$costLoss", 0] },
+                    0
+                  ]
+                }
+              },
+              returnLoss: {
+                $sum: {
+                  $cond: [
+                    { $eq: ["$lossReason", "customer_return_spoiled"] },
+                    { $ifNull: ["$costLoss", 0] },
+                    0
+                  ]
+                }
+              },
+              replacementCost: {
+                $sum: {
+                  $cond: [
+                    { $eq: ["$lossReason", "owner_replacement"] },
+                    { $ifNull: ["$costLoss", 0] },
+                    0
+                  ]
+                }
+              },
+              totalLoss: { $sum: { $ifNull: ["$costLoss", 0] } }
+            }
           }
+        ]),
+        getInventoryValuation(businessId, outletId),
+        Order.countDocuments(orderQuery)
+      ]);
+
+      entries = entriesRes;
+
+      const raw = summaryAgg[0] || {
+        totalDocuments: 0,
+        stockInvested: 0,
+        potentialMargin: 0,
+        spoilageLoss: 0,
+        returnLoss: 0,
+        replacementCost: 0,
+        totalLoss: 0,
+        realizedRevenue: 0,
+        realizedCost: 0
+      };
+
+      total = raw.totalDocuments || 0;
+      const onHandCostValue = valuation.onHandCostValue || 0;
+      const onHandSellValue = valuation.onHandSellValue || 0;
+      const realizedRevenue = raw.realizedRevenue || 0;
+      const realizedCost = raw.realizedCost || 0;
+      const realizedGrossProfit = realizedRevenue - realizedCost;
+
+      summary = {
+        ...raw,
+        realizedRevenue,
+        realizedCost,
+        realizedGrossProfit,
+        ordersCount,
+        netProfit: realizedGrossProfit - raw.totalLoss,
+        onHandCostValue,
+        onHandSellValue,
+        onHandPotentialMargin: onHandSellValue - onHandCostValue
+      };
+
+      ledgerSummaryCache.set(summaryCacheKey, {
+        timestamp: Date.now(),
+        summary,
+        total
+      });
+
+      if (ledgerSummaryCache.size > 500) {
+        const cutoff = Date.now() - LEDGER_SUMMARY_TTL;
+        for (const [k, v] of ledgerSummaryCache) {
+          if (v.timestamp < cutoff) ledgerSummaryCache.delete(k);
         }
-      ]),
-      getInventoryValuation(businessId, outletId),
-      Order.countDocuments(orderQuery)
-    ]);
-
-    const raw = summaryAgg[0] || {
-      totalDocuments: 0,
-      stockInvested: 0,
-      potentialMargin: 0,
-      spoilageLoss: 0,
-      returnLoss: 0,
-      replacementCost: 0,
-      totalLoss: 0,
-      realizedRevenue: 0,
-      realizedCost: 0
-    };
-
-    const total = raw.totalDocuments || 0;
-
-    const onHandCostValue = valuation.onHandCostValue || 0;
-    const onHandSellValue = valuation.onHandSellValue || 0;
-
-    const realizedRevenue = raw.realizedRevenue || 0;
-    const realizedCost = raw.realizedCost || 0;
-    const realizedGrossProfit = realizedRevenue - realizedCost;
-
-    const summary = {
-      ...raw,
-      realizedRevenue,
-      realizedCost,
-      realizedGrossProfit,
-      ordersCount,
-      netProfit: realizedGrossProfit - raw.totalLoss,
-      onHandCostValue,
-      onHandSellValue,
-      onHandPotentialMargin: onHandSellValue - onHandCostValue
-    };
+      }
+    }
 
     const movements = entries.map(formatLedgerRow);
-
-    const numLimit = Number(limit);
-    const numPage = Number(page);
 
     const meta = {
       pagination: {
@@ -654,5 +726,6 @@ export {
   getOutletComparison,
   getRevenueTrend,
   getWholesaleSummary,
-  getProfitLedger
+  getProfitLedger,
+  clearProfitLedgerCache
 };

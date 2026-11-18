@@ -86,6 +86,7 @@ const orderSchema = new Schema(
   },
   { timestamps: true }
 );
+orderSchema.index({ businessId: 1, outletId: 1, status: 1, createdAt: -1 });
 orderSchema.index({ businessId: 1, outletId: 1, status: 1 });
 orderSchema.index({ businessId: 1, outletId: 1, createdAt: -1 });
 orderSchema.index({ businessId: 1, customerId: 1, createdAt: -1 });

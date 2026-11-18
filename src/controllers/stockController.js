@@ -7,6 +7,7 @@ import { StockTransfer } from "../models/StockTransfer.js";
 import { AuditLog } from "../models/AuditLog.js";
 import { resolveUnitCost, resolveUnitSellPrice, getMovementCount } from "../utils/stockCostUtils.js";
 import { withTransaction } from "../utils/transaction.js";
+import { clearProfitLedgerCache } from "./reportController.js";
 
 import mongoose from "mongoose";
 
@@ -332,6 +333,7 @@ async function adjustStock(req, res, next) {
         ip: req.ip
       }).save({ session });
       
+      clearProfitLedgerCache(businessId);
       return successResponse({
         res: res,
         data: {
@@ -503,6 +505,7 @@ async function updateStockEntry(req, res, next) {
         businessId, actorId: userId, module: "inventory", action: "update_stock_entry", targetType: "StockEntry", targetId: entry._id, message: `Stock entry edited. Qty changed from ${qtyBefore} to ${qty}. Product on-hand: ${newOnHand}`, ip: req.ip
       }).save({ session });
 
+      clearProfitLedgerCache(businessId);
       return successResponse({ res, message: "Stock entry updated successfully" });
     });
   } catch (error) {
@@ -533,6 +536,7 @@ async function deleteStockEntry(req, res, next) {
 
       await StockEntry.deleteOne({ _id: entry._id }, { session });
 
+      clearProfitLedgerCache(businessId);
       return successResponse({ res, message: "Stock entry deleted successfully" });
     });
   } catch (error) {
