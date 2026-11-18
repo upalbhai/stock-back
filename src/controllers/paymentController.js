@@ -191,6 +191,13 @@ async function verifyPayment(req, res, next) {
       business.currentPeriodEnd = endDate;
       await business.save();
     }
+
+    try {
+      const { getIO } = await import("../config/socket.js");
+      getIO().to(`business:${businessId.toString()}`).emit("subscriptionUpdated");
+    } catch (err) {
+      // socket non-blocking
+    }
     
     await AuditLog.create({
       businessId,
@@ -462,7 +469,7 @@ async function requestGracePeriod(req, res, next) {
       console.error("Failed to create admin notification:", notifErr);
     }
 
-    // Socket emit to admin
+    // Socket emit to admin and business
     try {
       const { getIO } = await import("../config/socket.js");
       getIO().to("superadmin").emit("adminNotification", {
@@ -471,6 +478,7 @@ async function requestGracePeriod(req, res, next) {
         businessName: business.name,
         message: `${business.name} activated a ${days}-day grace period.`
       });
+      getIO().to(`business:${business._id.toString()}`).emit("subscriptionUpdated");
     } catch (e) {
       // socket silent
     }
