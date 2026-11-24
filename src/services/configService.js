@@ -108,6 +108,25 @@ export async function ensureInitialSettings() {
       modified = true;
     }
 
+    // Auto-migrate Email Provider credentials from process.env if not set in DB
+    if (!settings.emailConfig.brevo?.apiKey && process.env.BREVO_API_KEY) {
+      if (!settings.emailConfig.brevo) settings.emailConfig.brevo = {};
+      settings.emailConfig.brevo.apiKey = process.env.BREVO_API_KEY.trim();
+      if (!settings.emailConfig.provider || (settings.emailConfig.provider === "ZEPTOMAIL" && !settings.emailConfig.zepto?.apiKey && !settings.emailConfig.apiKey)) {
+        settings.emailConfig.provider = "BREVO";
+      }
+      modified = true;
+      logger.info("[ConfigService] Auto-migrated Brevo credentials from environment to Database");
+    }
+
+    if (!settings.emailConfig.zepto?.apiKey && process.env.ZEPTOMAIL_API_KEY) {
+      if (!settings.emailConfig.zepto) settings.emailConfig.zepto = {};
+      settings.emailConfig.zepto.apiKey = process.env.ZEPTOMAIL_API_KEY.trim();
+      settings.emailConfig.apiKey = process.env.ZEPTOMAIL_API_KEY.trim();
+      modified = true;
+      logger.info("[ConfigService] Auto-migrated ZeptoMail credentials from environment to Database");
+    }
+
     if (modified) {
       await settings.save();
       invalidateConfigCache();

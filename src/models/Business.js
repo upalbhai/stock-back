@@ -83,7 +83,14 @@ const businessSchema = new Schema(
     lastPlanRequestStatus: {
       status: { type: String, enum: ["approved", "rejected"] },
       reason: { type: String },
-      date: { type: Date }
+      message: { type: String },
+      price: { type: Number },
+      currency: { type: String },
+      billingCycle: { type: String },
+      maxOutlets: { type: Number },
+      maxProducts: { type: Number },
+      date: { type: Date },
+      reviewedBy: { type: Schema.Types.ObjectId, ref: "User" }
     },
     unlockRequest: {
       requestedAt: { type: Date },

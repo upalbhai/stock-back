@@ -7,13 +7,17 @@ dist
 .DS_Store
 uploads/
 seed/
+seeders/
+**/seed/
+**/seeders/
+src/seeders/
 mongo_dump/
 *.dump
 *.bson
 *.pem
 *.key
 benchmark*.js
-# Seeders
-src/seeders/
+# Seeders & Scripts
 /bruno*
 /scripts*
+scripts/

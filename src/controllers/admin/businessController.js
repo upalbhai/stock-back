@@ -388,23 +388,37 @@ async function approvePlanRequest(req, res, next) {
       business.currentPeriodEnd = new Date(now.getTime() + 365 * 24 * 60 * 60 * 1000);
     }
 
+    const decisionMessage = reason && reason.trim()
+      ? reason.trim()
+      : `Approved ${resolvedCurrency} ${resolvedPrice}/${resolvedCycle} (${business.maxOutlets} outlets, ${business.maxProducts === 0 ? "Unlimited" : business.maxProducts} products)`;
+
     business.pendingCustomPlan = undefined; // Clear it
     business.lastPlanRequestStatus = {
       status: "approved",
-      reason: reason || undefined,
-      date: new Date()
+      reason: decisionMessage,
+      message: decisionMessage,
+      price: resolvedPrice,
+      currency: resolvedCurrency,
+      billingCycle: resolvedCycle,
+      maxOutlets: business.maxOutlets,
+      maxProducts: business.maxProducts,
+      date: new Date(),
+      reviewedBy: req.user?.userId
     };
 
     await business.save();
 
     await AuditLog.create({
+      businessId: business._id,
+      targetId: business._id,
+      targetType: "Business",
+      targetName: business.name,
       actorId: req.user?.userId,
+      actorName: req.user?.name || "Super Admin",
+      actorRole: req.user?.role || "superadmin",
       module: "admin",
       action: "admin_plan_change_approved",
-      targetType: "Business",
-      targetId: business._id,
-      targetName: business.name,
-      message: `Approved custom plan change for ${business.name}.${reason ? ` Reason: ${reason}` : ""}`,
+      message: `Admin approved custom plan for ${business.name}: ${resolvedCurrency} ${resolvedPrice}/${resolvedCycle} (${business.maxOutlets} outlets, ${business.maxProducts === 0 ? "Unlimited" : business.maxProducts} products).${reason ? ` Note: ${reason}` : ""}`,
       ip: req.ip
     });
 
@@ -429,22 +443,28 @@ async function rejectPlanRequest(req, res, next) {
       return errorResponse({ res, statusCode: 404, message: "No pending plan request found" });
     }
 
+    const rejectionReason = reason && reason.trim() ? reason.trim() : "Rejected by admin without additional comments";
     business.pendingCustomPlan = undefined;
     business.lastPlanRequestStatus = {
       status: "rejected",
-      reason: reason,
-      date: new Date()
+      reason: rejectionReason,
+      message: rejectionReason,
+      date: new Date(),
+      reviewedBy: req.user?.userId
     };
     await business.save();
 
     await AuditLog.create({
+      businessId: business._id,
+      targetId: business._id,
+      targetType: "Business",
+      targetName: business.name,
       actorId: req.user?.userId,
+      actorName: req.user?.name || "Super Admin",
+      actorRole: req.user?.role || "superadmin",
       module: "admin",
       action: "admin_plan_change_rejected",
-      targetType: "Business",
-      targetId: business._id,
-      targetName: business.name,
-      message: `Rejected custom plan change for ${business.name}. Reason: ${reason || "No reason provided"}`,
+      message: `Admin rejected custom plan request for ${business.name}. Reason: ${rejectionReason}`,
       ip: req.ip
     });
 
@@ -457,17 +477,67 @@ async function rejectPlanRequest(req, res, next) {
 async function getAdminPlanRequestHistory(req, res, next) {
   try {
     const { AuditLog } = await import("../../models/AuditLog.js");
+    const { Business } = await import("../../models/Business.js");
+
+    const business = await Business.findById(req.params.id).lean();
+    if (!business) {
+      return errorResponse({ res, statusCode: 404, message: "Business not found" });
+    }
+
     const logs = await AuditLog.find({
-      businessId: req.params.id,
+      $or: [
+        { businessId: business._id },
+        { targetId: business._id }
+      ],
       action: {
         $in: [
           "agent_plan_change_requested",
           "direct_plan_change_requested",
           "admin_plan_change_approved",
-          "admin_plan_change_rejected"
+          "admin_plan_change_rejected",
+          "admin_approved_plan",
+          "admin_rejected_plan"
         ]
       }
     }).sort({ createdAt: -1 }).lean();
+
+    if (business.lastPlanRequestStatus && business.lastPlanRequestStatus.status) {
+      const targetAction = business.lastPlanRequestStatus.status === "approved"
+        ? "admin_plan_change_approved"
+        : "admin_plan_change_rejected";
+
+      const hasRecentLog = logs.some(l =>
+        (l.action === targetAction || (targetAction === "admin_plan_change_approved" && l.action === "admin_approved_plan") || (targetAction === "admin_plan_change_rejected" && l.action === "admin_rejected_plan")) &&
+        Math.abs(new Date(l.createdAt).getTime() - new Date(business.lastPlanRequestStatus.date).getTime()) < 60000
+      );
+
+      if (!hasRecentLog) {
+        const price = business.customPlanDetails?.price ?? 0;
+        const curr = business.customPlanDetails?.currency || "INR";
+        const cycle = business.customPlanDetails?.billingCycle || "monthly";
+        const outlets = business.maxOutlets || 1;
+        const prods = business.maxProducts || 50;
+        const msg = business.lastPlanRequestStatus.reason || business.lastPlanRequestStatus.message || (
+          business.lastPlanRequestStatus.status === "approved"
+            ? `Admin approved custom plan: ${curr} ${price}/${cycle} (${outlets} outlets, ${prods} products).`
+            : `Admin rejected custom plan request.`
+        );
+
+        logs.unshift({
+          _id: `synth_${business._id}_${new Date(business.lastPlanRequestStatus.date || Date.now()).getTime()}`,
+          businessId: business._id,
+          targetId: business._id,
+          action: targetAction,
+          actorName: "Super Admin",
+          actorRole: "superadmin",
+          module: "admin",
+          message: msg,
+          createdAt: business.lastPlanRequestStatus.date || new Date()
+        });
+
+        logs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      }
+    }
 
     return successResponse({ res, data: { logs } });
   } catch (error) {

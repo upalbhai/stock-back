@@ -9,33 +9,57 @@ import { User } from "../models/User.js";
 import { Invite } from "../models/Invite.js";
 import { Role } from "../models/Role.js";
 import { AuditLog } from "../models/AuditLog.js";
+import { AgentProfile } from "../models/AgentProfile.js";
 import { canAssignPermissions } from "../utils/permissions.js";
 import mailer from "../utils/mailer.js";
 import { assertCanAddStaff } from "../utils/planLimits.js";
 
 async function listUsers(req, res, next) {
   try {
-    let businessId = req.user.businessId;
-    if (req.user.role === "superadmin" && req.query.businessId) {
-      businessId = req.query.businessId;
+    let businessId = null;
+    if (req.user.role === "superadmin") {
+      if (req.query.businessId && req.query.businessId !== "all") {
+        businessId = req.query.businessId;
+      }
+    } else {
+      businessId = req.user.businessId;
     }
     const { outletId, role, isActive, search } = req.query;
     const page = parseInt(req.query.page, 10) || 1;
-    const limit = parseInt(req.query.limit, 10) || 50;
+    const limit = parseInt(req.query.limit, 10) || 100;
     const skip = (page - 1) * limit;
 
     const query = {};
     if (businessId) query.businessId = businessId;
     if (outletId) query.outletIds = outletId;
-    if (role) query.role = role;
-    if (search) {
-      query.name = { $regex: search, $options: "i" };
-    }
-    if (isActive !== void 0) {
-      if (isActive !== "all") {
-        query.isActive = isActive === "true";
+    if (role && role !== "all") {
+      if (role === "staff") {
+        query.role = { $in: ["manager", "cashier", "staff"] };
+      } else {
+        query.role = role;
       }
-    } else {
+    }
+
+    if (search && search.trim()) {
+      const escaped = search.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const matchingProfiles = await AgentProfile.find({
+        agentCode: { $regex: escaped, $options: "i" }
+      }).select("userId").lean();
+      const agentUserIdsFromCode = matchingProfiles.map((p) => p.userId);
+
+      query.$or = [
+        { name: { $regex: escaped, $options: "i" } },
+        { email: { $regex: escaped, $options: "i" } },
+        { phone: { $regex: escaped, $options: "i" } }
+      ];
+      if (agentUserIdsFromCode.length > 0) {
+        query.$or.push({ _id: { $in: agentUserIdsFromCode } });
+      }
+    }
+
+    if (isActive !== void 0 && isActive !== "all") {
+      query.isActive = isActive === "true" || isActive === true;
+    } else if (req.user.role !== "superadmin" && isActive === void 0) {
       query.isActive = true;
     }
 
@@ -43,12 +67,25 @@ async function listUsers(req, res, next) {
       User.find(query)
         .select("-passwordHash -inviteToken")
         .populate("roleId", "name permissions")
-        .sort({ name: 1 })
+        .populate("businessId", "name code email phone subscriptionStatus")
+        .populate("outletIds", "name code")
+        .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
         .lean(),
       User.countDocuments(query)
     ]);
+
+    const agentUserIds = users.filter((u) => u.role === "agent").map((u) => u._id);
+    if (agentUserIds.length > 0) {
+      const agentProfiles = await AgentProfile.find({ userId: { $in: agentUserIds } }).lean();
+      const profileMap = new Map(agentProfiles.map((p) => [p.userId.toString(), p]));
+      for (const u of users) {
+        if (u.role === "agent") {
+          u.agentProfile = profileMap.get(u._id.toString()) || null;
+        }
+      }
+    }
 
     return successResponse({
       res: res,
@@ -72,10 +109,15 @@ async function listUsers(req, res, next) {
 
 async function getUser(req, res, next) {
   try {
-    const { businessId } = req.user;
-    const user = await User.findOne({ _id: req.params.id, businessId })
+    const query = { _id: req.params.id };
+    if (req.user.role !== "superadmin") {
+      query.businessId = req.user.businessId;
+    }
+    const user = await User.findOne(query)
       .select("-passwordHash -inviteToken")
       .populate("roleId", "name permissions outletScope outletIds")
+      .populate("businessId", "name code email phone subscriptionStatus")
+      .populate("outletIds", "name code")
       .lean();
 
     if (!user) return errorResponse({
@@ -83,6 +125,11 @@ async function getUser(req, res, next) {
       statusCode: 404,
       message: "User not found"
     });
+
+    if (user.role === "agent") {
+      user.agentProfile = await AgentProfile.findOne({ userId: user._id }).lean();
+    }
+
     return successResponse({
       res: res,
 
@@ -214,8 +261,13 @@ async function updateUser(req, res, next) {
       }
     }
 
+    const userQuery = { _id: req.params.id };
+    if (req.user.role !== "superadmin") {
+      userQuery.businessId = businessId;
+    }
+
     const user = await User.findOneAndUpdate(
-      { _id: req.params.id, businessId },
+      userQuery,
       { $set: update },
       { new: true }
     ).select("-passwordHash -inviteToken");
@@ -240,8 +292,12 @@ async function updateUser(req, res, next) {
 async function deleteUser(req, res, next) {
   try {
     const { businessId } = req.user;
+    const deleteQuery = { _id: req.params.id };
+    if (req.user.role !== "superadmin") {
+      deleteQuery.businessId = businessId;
+    }
     const user = await User.findOneAndUpdate(
-      { _id: req.params.id, businessId },
+      deleteQuery,
       { $set: { isActive: false } },
       { new: true }
     );

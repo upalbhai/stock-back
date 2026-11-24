@@ -100,16 +100,42 @@ export async function getAgentClients(req, res, next) {
     const clients = await Business.find(query)
       .select("name email phone status subscriptionStatus customPlanDetails pendingCustomPlan lastPlanRequestStatus createdAt ownerId")
       .populate("ownerId", "name email phone")
+      .populate("pendingCustomPlan.requestedBy", "name email")
       .sort({ createdAt: -1 })
       .skip((page - 1) * limit)
       .limit(limit)
       .lean();
 
-    const formattedClients = clients.map((c) => ({
-      ...c,
-      email: c.email || c.ownerId?.email || "",
-      phone: c.phone || c.ownerId?.phone || ""
-    }));
+    const formattedClients = clients.map((c) => {
+      let lastPlanStatus = c.lastPlanRequestStatus;
+      if (lastPlanStatus && !lastPlanStatus.reason && !lastPlanStatus.message) {
+        if (lastPlanStatus.status === "approved") {
+          const price = c.customPlanDetails?.price ?? 0;
+          const curr = c.customPlanDetails?.currency || "INR";
+          const cycle = c.customPlanDetails?.billingCycle || "monthly";
+          const outlets = c.customPlanDetails?.maxOutlets ?? 1;
+          const prods = c.customPlanDetails?.maxProducts ?? 50;
+          const autoMsg = `Approved by Admin: ${curr} ${price}/${cycle} (${outlets} outlets, ${prods === 0 ? "Unlimited" : prods} products)`;
+          lastPlanStatus = {
+            ...lastPlanStatus,
+            reason: autoMsg,
+            message: autoMsg
+          };
+        } else if (lastPlanStatus.status === "rejected") {
+          lastPlanStatus = {
+            ...lastPlanStatus,
+            reason: "Rejected by admin",
+            message: "Rejected by admin"
+          };
+        }
+      }
+      return {
+        ...c,
+        lastPlanRequestStatus: lastPlanStatus,
+        email: c.email || c.ownerId?.email || "",
+        phone: c.phone || c.ownerId?.phone || ""
+      };
+    });
 
     return successResponse({
       res,
@@ -198,7 +224,7 @@ export async function createClient(req, res, next) {
 export async function updateCustomPlan(req, res, next) {
   try {
     const { businessId } = req.params;
-    const { price, currency, maxProducts, maxOutlets, enabledFeatures } = req.body;
+    const { price, currency, maxProducts, maxOutlets, enabledFeatures, notes, billingCycle } = req.body;
     const agentId = req.user.userId;
 
     const business = await Business.findOne({ _id: businessId, agentId });
@@ -225,9 +251,11 @@ export async function updateCustomPlan(req, res, next) {
     business.pendingCustomPlan = {
       price,
       currency: curr,
+      billingCycle: billingCycle === "yearly" ? "yearly" : "monthly",
       maxProducts: maxProducts || business.maxProducts,
       maxOutlets: maxOutlets || business.maxOutlets,
       enabledFeatures: enabledFeatures || business.enabledFeatures,
+      notes: notes || (business.pendingCustomPlan?.notes ? `Agent quote for client request: ${business.pendingCustomPlan.notes}` : "Agent custom plan proposal"),
       requestedAt: new Date(),
       requestedBy: agentId
     };
@@ -241,7 +269,7 @@ export async function updateCustomPlan(req, res, next) {
       actorId: agentId,
       module: "billing",
       action: "agent_plan_change_requested",
-      message: `Agent requested custom plan change. Pending admin approval.`,
+      message: `Agent proposed custom plan quote: ${curr} ${price}/mo (${maxProducts || business.maxProducts} products, ${maxOutlets || business.maxOutlets} outlets). Pending admin approval.`,
       ip: req.ip
     });
 
@@ -314,9 +342,59 @@ export async function getPlanRequestHistory(req, res, next) {
 
     const { AuditLog } = await import("../models/AuditLog.js");
     const logs = await AuditLog.find({
-      businessId,
-      action: { $in: ["agent_plan_change_requested", "admin_approved_plan", "admin_rejected_plan"] }
+      $or: [
+        { businessId: business._id },
+        { targetId: business._id }
+      ],
+      action: {
+        $in: [
+          "agent_plan_change_requested",
+          "direct_plan_change_requested",
+          "admin_plan_change_approved",
+          "admin_plan_change_rejected",
+          "admin_approved_plan",
+          "admin_rejected_plan"
+        ]
+      }
     }).sort({ createdAt: -1 }).lean();
+
+    if (business.lastPlanRequestStatus && business.lastPlanRequestStatus.status) {
+      const targetAction = business.lastPlanRequestStatus.status === "approved"
+        ? "admin_plan_change_approved"
+        : "admin_plan_change_rejected";
+
+      const hasRecentLog = logs.some(l =>
+        (l.action === targetAction || (targetAction === "admin_plan_change_approved" && l.action === "admin_approved_plan") || (targetAction === "admin_plan_change_rejected" && l.action === "admin_rejected_plan")) &&
+        Math.abs(new Date(l.createdAt).getTime() - new Date(business.lastPlanRequestStatus.date).getTime()) < 60000
+      );
+
+      if (!hasRecentLog) {
+        const price = business.customPlanDetails?.price ?? 0;
+        const curr = business.customPlanDetails?.currency || "INR";
+        const cycle = business.customPlanDetails?.billingCycle || "monthly";
+        const outlets = business.maxOutlets || 1;
+        const prods = business.maxProducts || 50;
+        const msg = business.lastPlanRequestStatus.reason || business.lastPlanRequestStatus.message || (
+          business.lastPlanRequestStatus.status === "approved"
+            ? `Admin approved custom plan: ${curr} ${price}/${cycle} (${outlets} outlets, ${prods === 0 ? "Unlimited" : prods} products).`
+            : `Admin rejected custom plan request.`
+        );
+
+        logs.unshift({
+          _id: `synth_${business._id}_${new Date(business.lastPlanRequestStatus.date || Date.now()).getTime()}`,
+          businessId: business._id,
+          targetId: business._id,
+          action: targetAction,
+          actorName: "Super Admin",
+          actorRole: "superadmin",
+          module: "admin",
+          message: msg,
+          createdAt: business.lastPlanRequestStatus.date || new Date()
+        });
+
+        logs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      }
+    }
 
     return successResponse({ res, data: { logs } });
   } catch (error) {
